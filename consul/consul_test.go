@@ -65,6 +65,15 @@ func TestConsul_Next(t *testing.T) {
 		s.Serve(lis)
 	}()
 
+	if err = c.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err = New(&Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	testNext(t, "pass", 2*time.Second, c, 0, 1)
 
 	go func() {

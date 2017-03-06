@@ -1,11 +1,17 @@
 package consul
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/hashicorp/consul/api"
+)
+
+const (
+	lockKey  = "consul-slack-lock"
+	stateKey = "consul-slack-state"
 )
 
 // New creates new consul client
@@ -25,7 +31,6 @@ func New(cfg *Config) (*Consul, error) {
 	}
 
 	sessionID, _, err := c.Session().Create(&api.SessionEntry{
-		Name:     "consul-slack-lock",
 		Behavior: "delete",
 		TTL:      "15s",
 	}, nil)
@@ -40,13 +45,13 @@ func New(cfg *Config) (*Consul, error) {
 		sessionAPI: c.Session(),
 
 		lock: &api.KVPair{
-			Key:     "consul-slack-lock",
+			Key:     lockKey,
 			Value:   []byte{'o', 'k'},
 			Session: sessionID,
 		},
 
 		interval: cfg.Interval,
-		stopCh: make(chan struct{}),
+		stopCh:   make(chan struct{}),
 	}, nil
 }
 
@@ -69,8 +74,7 @@ type Consul struct {
 	stopCh   chan struct{}
 	interval time.Duration
 
-	// TODO: use KV
-	// cc is critical checks
+	// cc is critical checks, basically application state
 	cc api.HealthChecks
 }
 
@@ -136,11 +140,52 @@ func (c *Consul) Unlock() error {
 	return err
 }
 
+// load loads consul state from kv store
+func (c *Consul) load() (api.HealthChecks, error) {
+	kv, _, err := c.kvAPI.Get(stateKey, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	chs := api.HealthChecks{}
+
+	if kv != nil {
+		err = json.Unmarshal(kv.Value, &chs)
+	}
+
+	return chs, err
+}
+
+// dump saves consul state to kv store
+func (c *Consul) dump(chs api.HealthChecks) error {
+	b, err := json.Marshal(chs)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.kvAPI.Put(&api.KVPair{
+		Key:   stateKey,
+		Value: b,
+	}, nil)
+
+	return err
+}
+
 // Next returns slices of critical and passing events
 func (c *Consul) Next() (cc api.HealthChecks, pc api.HealthChecks, err error) {
 	var hc api.HealthChecks
 
+	// start immediately
 	t := time.NewTimer(time.Duration(0))
+
+	if c.cc == nil {
+		c.cc, err = c.load()
+		if err != nil {
+			return
+		}
+
+		c.infof("initial state is %v", c.cc)
+	}
 
 	for {
 		select {
@@ -172,6 +217,11 @@ func (c *Consul) Next() (cc api.HealthChecks, pc api.HealthChecks, err error) {
 				cc = append(cc, check)
 				c.cc = append(c.cc, check)
 				c.infof("[%s] %s is failing", check.Node, check.ServiceName)
+			}
+
+			// save state
+			if err = c.dump(c.cc); err != nil {
+				return
 			}
 
 			if len(cc) > 0 || len(pc) > 0 {
