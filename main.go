@@ -16,8 +16,9 @@ func main() {
 		interval = time.Second
 
 		slackCfg = &slack.Config{
-			Channel:  "consul",
+			Channel:  "#consul",
 			Username: "consul",
+			IconURL: "https://www.consul.io/assets/images/logo_large-475cebb0.png",
 		}
 
 		consulCfg = &consul.Config{
