@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -47,12 +46,12 @@ func TestConsul_Next(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c, err := New(&Config{})
+	c1, err := New(&Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	testNext(t, "fail", 2*time.Second, c, 1, 0)
+	testNext(t, "fail", 2*time.Second, c1, 1, 0)
 
 	// start service
 	go func() {
@@ -65,24 +64,30 @@ func TestConsul_Next(t *testing.T) {
 		s.Serve(lis)
 	}()
 
-	if err = c.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	c, err = New(&Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	testNext(t, "pass", 2*time.Second, c, 0, 1)
-
+	ch := make(chan struct{})
 	go func() {
-		if err := c.Close(); err != nil {
+		c2, err := New(&Config{})
+		if err != nil {
 			t.Fatal(err)
 		}
+
+		testNext(t, "pass", 2*time.Second, c2, 0, 1)
+
+		go func() {
+			if err := c2.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}()
+
+		testNext(t, "gone", time.Duration(0), c2, 0, 0)
+		close(ch)
 	}()
 
-	testNext(t, "gone", time.Duration(0), c, 0, 0)
+	if err = c1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	<-ch
 }
 
 func testNext(t *testing.T, name string, delay time.Duration, c *Consul, ccl, pcl int) {
@@ -98,51 +103,6 @@ func testNext(t *testing.T, name string, delay time.Duration, c *Consul, ccl, pc
 	}
 	if len(pc) != pcl {
 		t.Errorf("%s: len(pc) = %d, want %d", name, len(pc), pcl)
-	}
-}
-
-func TestConsul_LockUnlock(t *testing.T) {
-	p := startConsul(t)
-	defer stopConsul(t, p)
-
-	c1, err := New(&Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var r []int
-
-	c2, err := New(&Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := c1.Lock(); err != nil {
-		t.Fatal(err)
-	}
-
-	c := make(chan struct{})
-	go func() {
-		if err := c2.Lock(); err != nil {
-			t.Fatal(err)
-		}
-		defer c2.Unlock()
-
-		r = append(r, 2)
-		close(c)
-	}()
-
-	time.Sleep(200 * time.Millisecond)
-	r = append(r, 1)
-
-	// unlock c1 manually
-	if err := c1.Unlock(); err != nil {
-		t.Fatal(err)
-	}
-
-	<-c
-	if !reflect.DeepEqual(r, []int{1, 2}) {
-		t.Errorf("result stack = %v, want %v", r, []int{1, 2})
 	}
 }
 

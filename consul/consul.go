@@ -30,29 +30,20 @@ func New(cfg *Config) (*Consul, error) {
 		return nil, err
 	}
 
-	sessionID, _, err := c.Session().Create(&api.SessionEntry{
-		Behavior: "delete",
-		TTL:      "15s",
-	}, nil)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return &Consul{
+	cc := &Consul{
 		kvAPI:      c.KV(),
 		healthAPI:  c.Health(),
 		sessionAPI: c.Session(),
 
-		lock: &api.KVPair{
-			Key:     lockKey,
-			Value:   []byte{'o', 'k'},
-			Session: sessionID,
-		},
-
 		interval: cfg.Interval,
 		stopCh:   make(chan struct{}),
-	}, nil
+	}
+
+	if err = cc.startSession(); err != nil {
+		return nil, err
+	}
+
+	return cc, nil
 }
 
 // Config is consul configuration
@@ -69,37 +60,40 @@ type Consul struct {
 	healthAPI  *api.Health
 	sessionAPI *api.Session
 
-	lock     *api.KVPair
-	lockCh   chan struct{}
 	stopCh   chan struct{}
 	interval time.Duration
-
-	// cc is critical checks, basically application state
-	cc api.HealthChecks
+	cc       api.HealthChecks
 }
 
-// Close shuts down Next() function
-func (c *Consul) Close() error {
-	close(c.stopCh)
-	return nil
-}
+// startSession creates new consul session and holds an unique lock
+func (c *Consul) startSession() error {
+	sess, _, err := c.sessionAPI.Create(&api.SessionEntry{
+		Behavior: "delete",
+		TTL:      "30s",
+	}, nil)
 
-// Lock blocks until lock is acquired
-func (c *Consul) Lock() error {
-	if c.lockCh != nil {
-		panic("already locked")
+	if err != nil {
+		return err
 	}
 
-	c.infof("%s lock", c.lock.Session)
+	c.infof("%s created", sess)
+	c.infof("%s lock", sess)
+
+	// lock
+	lock := &api.KVPair{
+		Key:   lockKey,
+		Value: []byte{'o', 'k'},
+		Session: sess,
+	}
 
 	for {
-		ok, _, err := c.kvAPI.Acquire(c.lock, nil)
+		ok, _, err := c.kvAPI.Acquire(lock, nil)
 		if err != nil {
 			return err
 		}
 
 		if ok {
-			c.infof("%s acquired", c.lock.Session)
+			c.infof("%s acquired", sess)
 			break
 		}
 
@@ -107,18 +101,31 @@ func (c *Consul) Lock() error {
 		time.Sleep(time.Second)
 	}
 
-	c.lockCh = make(chan struct{})
-
-	// renew session in background
+	// renew session in the background
 	go func() {
 	Loop:
 		for {
 			select {
-			case <-c.lockCh:
-				break Loop
-			case <-time.After(10 * time.Second):
-				_, _, err := c.sessionAPI.Renew(c.lock.Session, nil)
+			case <-c.stopCh:
+				// unlock
+				c.infof("%s release", sess)
+				_, _, err := c.kvAPI.Release(lock, nil)
 				if err != nil {
+					c.infof("release lock error: %v", err)
+				}
+
+				// destroy
+				c.infof("%s destroy", sess)
+				_, err = c.sessionAPI.Destroy(sess, nil)
+				if err != nil {
+					c.infof("destroy session error: %v", err)
+				}
+
+				break Loop
+			case <-time.After(15 * time.Second):
+				_, _, err := c.sessionAPI.Renew(sess, nil)
+				if err != nil {
+					c.infof("renew session error: %v", err)
 					return
 				}
 			}
@@ -128,16 +135,10 @@ func (c *Consul) Lock() error {
 	return nil
 }
 
-// Unlock releases previously created lock
-func (c *Consul) Unlock() error {
-	if c.lockCh == nil {
-		panic("not locked")
-	}
-
-	close(c.lockCh)
-	c.infof("%s release", c.lock.Session)
-	_, _, err := c.kvAPI.Release(c.lock, nil)
-	return err
+// Close shuts down Next() function
+func (c *Consul) Close() error {
+	close(c.stopCh)
+	return nil
 }
 
 // load loads consul state from kv store

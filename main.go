@@ -55,12 +55,6 @@ func main() {
 		return
 	}
 
-	if err = c.Lock(); err != nil {
-		exitErr = err
-		return
-	}
-	defer c.Unlock()
-
 	s, err := slack.New(slackCfg)
 	if err != nil {
 		exitErr = err
