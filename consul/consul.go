@@ -3,7 +3,6 @@ package consul
 import (
 	"fmt"
 	"os"
-
 	"time"
 
 	"github.com/hashicorp/consul/api"
@@ -47,6 +46,7 @@ func New(cfg *Config) (*Consul, error) {
 		},
 
 		interval: cfg.Interval,
+		stopCh: make(chan struct{}),
 	}, nil
 }
 
@@ -66,11 +66,18 @@ type Consul struct {
 
 	lock     *api.KVPair
 	lockCh   chan struct{}
+	stopCh   chan struct{}
 	interval time.Duration
 
 	// TODO: use KV
 	// cc is critical checks
 	cc api.HealthChecks
+}
+
+// Close shuts down Next() function
+func (c *Consul) Close() error {
+	close(c.stopCh)
+	return nil
 }
 
 // Lock blocks until lock is acquired
@@ -133,39 +140,46 @@ func (c *Consul) Unlock() error {
 func (c *Consul) Next() (cc api.HealthChecks, pc api.HealthChecks, err error) {
 	var hc api.HealthChecks
 
+	t := time.NewTimer(time.Duration(0))
+
 	for {
-		hc, _, err = c.healthAPI.State("critical", nil)
-		if err != nil {
+		select {
+		case <-c.stopCh:
 			return
-		}
-
-		// passing
-		for _, check := range c.cc {
-			if pos(hc, check) != -1 {
-				continue
+		case <-t.C:
+			hc, _, err = c.healthAPI.State("critical", nil)
+			if err != nil {
+				return
 			}
 
-			pc = append(pc, check)
-			c.cc = del(c.cc, check)
-			c.infof("[%s] %s is passing", check.Node, check.ServiceName)
-		}
+			// passing
+			for _, check := range c.cc {
+				if pos(hc, check) != -1 {
+					continue
+				}
 
-		// critical
-		for _, check := range hc {
-			if pos(c.cc, check) != -1 {
-				continue
+				pc = append(pc, check)
+				c.cc = del(c.cc, check)
+				c.infof("[%s] %s is passing", check.Node, check.ServiceName)
 			}
 
-			cc = append(cc, check)
-			c.cc = append(c.cc, check)
-			c.infof("[%s] %s is failing", check.Node, check.ServiceName)
-		}
+			// critical
+			for _, check := range hc {
+				if pos(c.cc, check) != -1 {
+					continue
+				}
 
-		if len(cc) > 0 || len(pc) > 0 {
-			return
-		}
+				cc = append(cc, check)
+				c.cc = append(c.cc, check)
+				c.infof("[%s] %s is failing", check.Node, check.ServiceName)
+			}
 
-		time.Sleep(c.interval)
+			if len(cc) > 0 || len(pc) > 0 {
+				return
+			}
+
+			t = time.NewTimer(c.interval)
+		}
 	}
 }
 

@@ -66,6 +66,13 @@ func TestConsul_Next(t *testing.T) {
 	}()
 
 	testNext(t, "pass", 2*time.Second, c, 0, 1)
+
+	go func() {
+		if err := c.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
 	testNext(t, "gone", time.Duration(0), c, 0, 0)
 }
 

@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/amenzhinsky/consul-slack/consul"
@@ -65,10 +67,21 @@ func main() {
 		return
 	}
 
+	ch := make(chan os.Signal)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-ch
+		c.Close()
+	}()
+
 	for {
 		cc, pc, err := c.Next()
 		if err != nil {
 			exitErr = err
+			return
+		}
+
+		if len(cc) == 0 && len(pc) == 0 && err == nil {
 			return
 		}
 
