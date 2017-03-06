@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 
+	"time"
+
 	"github.com/hashicorp/consul/api"
 )
 
@@ -23,9 +25,26 @@ func New(cfg *Config) (*Consul, error) {
 		return nil, err
 	}
 
+	sessionID, _, err := c.Session().Create(&api.SessionEntry{
+		Name:     "consul-slack-lock",
+		Behavior: "delete",
+		TTL:      "15s",
+	}, nil)
+
+	if err != nil {
+		return nil, err
+	}
+
 	return &Consul{
-		kvAPI:     c.KV(),
-		healthAPI: c.Health(),
+		kvAPI:      c.KV(),
+		healthAPI:  c.Health(),
+		sessionAPI: c.Session(),
+
+		lock: &api.KVPair{
+			Key:     "consul-slack-lock",
+			Value:   []byte{'o', 'k'},
+			Session: sessionID,
+		},
 	}, nil
 }
 
@@ -38,12 +57,72 @@ type Config struct {
 
 // Consul is the consul server client
 type Consul struct {
-	kvAPI     *api.KV
-	healthAPI *api.Health
+	kvAPI      *api.KV
+	healthAPI  *api.Health
+	sessionAPI *api.Session
+
+	lock   *api.KVPair
+	lockCh chan struct{}
 
 	// TODO: use KV
 	// cc is critical checks
 	cc api.HealthChecks
+}
+
+// Lock blocks until lock is acquired
+func (c *Consul) Lock() error {
+	if c.lockCh != nil {
+		panic("already locked")
+	}
+
+	c.infof("%s lock", c.lock.Session)
+
+	for {
+		ok, _, err := c.kvAPI.Acquire(c.lock, nil)
+		if err != nil {
+			return err
+		}
+
+		if ok {
+			c.infof("%s acquired", c.lock.Session)
+			break
+		}
+
+		// wait before next iteration
+		time.Sleep(time.Second)
+	}
+
+	c.lockCh = make(chan struct{})
+
+	// renew session in background
+	go func() {
+	Loop:
+		for {
+			select {
+			case <-c.lockCh:
+				break Loop
+			case <-time.After(10 * time.Second):
+				_, _, err := c.sessionAPI.Renew(c.lock.Session, nil)
+				if err != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	return nil
+}
+
+// Unlock releases previously created lock
+func (c *Consul) Unlock() error {
+	if c.lockCh == nil {
+		panic("not locked")
+	}
+
+	close(c.lockCh)
+	c.infof("%s release", c.lock.Session)
+	_, _, err := c.kvAPI.Release(c.lock, nil)
+	return err
 }
 
 // Next returns slices of critical and passing events
@@ -61,7 +140,7 @@ func (c *Consul) Next() (cc api.HealthChecks, pc api.HealthChecks, err error) {
 
 		pc = append(pc, check)
 		c.cc = del(c.cc, check)
-		c.infof("consul: [%s] %s is passing\n", check.Node, check.ServiceName)
+		c.infof("[%s] %s is passing", check.Node, check.ServiceName)
 	}
 
 	// critical
@@ -72,7 +151,7 @@ func (c *Consul) Next() (cc api.HealthChecks, pc api.HealthChecks, err error) {
 
 		cc = append(cc, check)
 		c.cc = append(c.cc, check)
-		c.infof("consul: [%s] %s is failing\n", check.Node, check.ServiceName)
+		c.infof("[%s] %s is failing", check.Node, check.ServiceName)
 	}
 
 	return
@@ -80,7 +159,7 @@ func (c *Consul) Next() (cc api.HealthChecks, pc api.HealthChecks, err error) {
 
 // infof prints a debug message to stderr when debug mode is enabled
 func (c *Consul) infof(s string, v ...interface{}) {
-	fmt.Fprintf(os.Stderr, s, v...)
+	fmt.Fprintf(os.Stderr, "consul: "+s+"\n", v...)
 }
 
 // pos finds check's position in health checks slice or return -1

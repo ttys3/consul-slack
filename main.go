@@ -11,14 +11,20 @@ import (
 	"github.com/amenzhinsky/consul-slack/slack"
 )
 
+// exitErr is last error occurred before the main function returns
+var exitErr error
+
 func main() {
+	// make sure that all defers are executed before program exits
+	defer handleExitErr()
+
 	var (
 		interval = time.Second
 
 		slackCfg = &slack.Config{
 			Channel:  "#consul",
 			Username: "consul",
-			IconURL: "https://www.consul.io/assets/images/logo_large-475cebb0.png",
+			IconURL:  "https://www.consul.io/assets/images/logo_large-475cebb0.png",
 		}
 
 		consulCfg = &consul.Config{
@@ -44,22 +50,27 @@ func main() {
 
 	c, err := consul.New(consulCfg)
 	if err != nil {
-		fail(err)
+		exitErr = err
+		return
 	}
+
+	if err = c.Lock(); err != nil {
+		exitErr = err
+		return
+	}
+	defer c.Unlock()
 
 	s, err := slack.New(slackCfg)
 	if err != nil {
-		fail(err)
-	}
-
-	if err != nil {
-		fail(err)
+		exitErr = err
+		return
 	}
 
 	for {
 		cc, pc, err := c.Next()
 		if err != nil {
-			fail(err)
+			exitErr = err
+			return
 		}
 
 		for _, c := range cc {
@@ -74,6 +85,14 @@ func main() {
 }
 
 func fail(err error) {
+	if err == nil {
+		return
+	}
+
 	fmt.Fprintf(os.Stderr, "error: %s\n", err.Error())
 	os.Exit(1)
+}
+
+func handleExitErr() {
+	fail(exitErr)
 }

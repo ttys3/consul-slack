@@ -3,7 +3,9 @@ package consul
 import (
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
+	"reflect"
 	"strconv"
 	"testing"
 	"time"
@@ -11,20 +13,9 @@ import (
 	"github.com/hashicorp/consul/api"
 )
 
-func TestConsul(t *testing.T) {
-	cmd := exec.Command("consul", "agent", "-dev")
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer cmd.Process.Kill()
-
-	go func() {
-		if err := cmd.Wait(); err != nil {
-			t.Fatal(err)
-		}
-	}()
-
-	time.Sleep(100 * time.Millisecond)
+func TestConsul_Next(t *testing.T) {
+	p := startConsul(t)
+	defer stopConsul(t, p)
 
 	cc, err := api.NewClient(&api.Config{})
 	if err != nil {
@@ -92,4 +83,65 @@ func testNext(t *testing.T, name string, delay time.Duration, c *Consul, ccl, pc
 	if len(pc) != pcl {
 		t.Errorf("%s: len(pc) = %d, want %d", name, len(pc), pcl)
 	}
+}
+
+func TestConsul_LockUnlock(t *testing.T) {
+	p := startConsul(t)
+	defer stopConsul(t, p)
+
+	c1, err := New(&Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var r []int
+
+	c2, err := New(&Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c1.Lock(); err != nil {
+		t.Fatal(err)
+	}
+
+	c := make(chan struct{})
+	go func() {
+		if err := c2.Lock(); err != nil {
+			t.Fatal(err)
+		}
+		defer c2.Unlock()
+
+		r = append(r, 2)
+		close(c)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	r = append(r, 1)
+
+	// unlock c1 manually
+	if err := c1.Unlock(); err != nil {
+		t.Fatal(err)
+	}
+
+	<-c
+	if !reflect.DeepEqual(r, []int{1, 2}) {
+		t.Errorf("result stack = %v, want %v", r, []int{1, 2})
+	}
+}
+
+func startConsul(t *testing.T) *os.Process {
+	cmd := exec.Command("consul", "agent", "-dev")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	go cmd.Wait()
+
+	time.Sleep(100 * time.Millisecond)
+	return cmd.Process
+}
+
+func stopConsul(t *testing.T, p *os.Process) {
+	p.Kill()
 }
