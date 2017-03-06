@@ -51,7 +51,7 @@ type Config struct {
 	Address    string
 	Scheme     string
 	Datacenter string
-	Interval   time.Duration
+	Interval  time.Duration
 }
 
 // Consul is the consul server client
@@ -60,6 +60,8 @@ type Consul struct {
 	healthAPI  *api.Health
 	sessionAPI *api.Session
 
+	lock     *api.KVPair
+	locked   bool
 	stopCh   chan struct{}
 	interval time.Duration
 	cc       api.HealthChecks
@@ -79,10 +81,9 @@ func (c *Consul) startSession() error {
 	c.infof("%s created", sess)
 	c.infof("%s lock", sess)
 
-	locked := false
-	lock := &api.KVPair{
-		Key:   lockKey,
-		Value: []byte{'o', 'k'},
+	c.lock = &api.KVPair{
+		Key:     lockKey,
+		Value:   []byte{'o', 'k'},
 		Session: sess,
 	}
 
@@ -92,22 +93,6 @@ func (c *Consul) startSession() error {
 		for {
 			select {
 			case <-c.stopCh:
-				// unlock
-				if locked {
-					c.infof("%s release", sess)
-					_, _, err := c.kvAPI.Release(lock, nil)
-					if err != nil {
-						c.infof("release lock error: %v", err)
-					}
-				}
-
-				// destroy session
-				c.infof("%s destroy", sess)
-				_, err = c.sessionAPI.Destroy(sess, nil)
-				if err != nil {
-					c.infof("destroy session error: %v", err)
-				}
-
 				break Loop
 			case <-time.After(15 * time.Second):
 				_, _, err := c.sessionAPI.Renew(sess, nil)
@@ -121,14 +106,14 @@ func (c *Consul) startSession() error {
 
 	// lock
 	for {
-		ok, _, err := c.kvAPI.Acquire(lock, nil)
+		ok, _, err := c.kvAPI.Acquire(c.lock, nil)
 		if err != nil {
 			return err
 		}
 
 		if ok {
 			c.infof("%s acquired", sess)
-			locked = true
+			c.locked = true
 			break
 		}
 
@@ -141,6 +126,21 @@ func (c *Consul) startSession() error {
 
 // Close shuts down Next() function
 func (c *Consul) Close() error {
+	if c.locked {
+		c.infof("%s release", c.lock.Session)
+		_, _, err := c.kvAPI.Release(c.lock, nil)
+		if err != nil {
+			return err
+		}
+	}
+
+	// destroy session
+	c.infof("%s destroy", c.lock.Session)
+	_, err := c.sessionAPI.Destroy(c.lock.Session, nil)
+	if err != nil {
+		return err
+	}
+
 	close(c.stopCh)
 	return nil
 }
@@ -195,6 +195,7 @@ func (c *Consul) Next() (cc api.HealthChecks, pc api.HealthChecks, err error) {
 	for {
 		select {
 		case <-c.stopCh:
+
 			return
 		case <-t.C:
 			hc, _, err = c.healthAPI.State("critical", nil)
