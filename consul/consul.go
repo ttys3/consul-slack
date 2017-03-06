@@ -45,6 +45,8 @@ func New(cfg *Config) (*Consul, error) {
 			Value:   []byte{'o', 'k'},
 			Session: sessionID,
 		},
+
+		interval: cfg.Interval,
 	}, nil
 }
 
@@ -53,6 +55,7 @@ type Config struct {
 	Address    string
 	Scheme     string
 	Datacenter string
+	Interval   time.Duration
 }
 
 // Consul is the consul server client
@@ -61,8 +64,9 @@ type Consul struct {
 	healthAPI  *api.Health
 	sessionAPI *api.Session
 
-	lock   *api.KVPair
-	lockCh chan struct{}
+	lock     *api.KVPair
+	lockCh   chan struct{}
+	interval time.Duration
 
 	// TODO: use KV
 	// cc is critical checks
@@ -127,34 +131,42 @@ func (c *Consul) Unlock() error {
 
 // Next returns slices of critical and passing events
 func (c *Consul) Next() (cc api.HealthChecks, pc api.HealthChecks, err error) {
-	hc, _, err := c.healthAPI.State("critical", nil)
-	if err != nil {
-		return
-	}
+	var hc api.HealthChecks
 
-	// passing
-	for _, check := range c.cc {
-		if pos(hc, check) != -1 {
-			continue
+	for {
+		hc, _, err = c.healthAPI.State("critical", nil)
+		if err != nil {
+			return
 		}
 
-		pc = append(pc, check)
-		c.cc = del(c.cc, check)
-		c.infof("[%s] %s is passing", check.Node, check.ServiceName)
-	}
+		// passing
+		for _, check := range c.cc {
+			if pos(hc, check) != -1 {
+				continue
+			}
 
-	// critical
-	for _, check := range hc {
-		if pos(c.cc, check) != -1 {
-			continue
+			pc = append(pc, check)
+			c.cc = del(c.cc, check)
+			c.infof("[%s] %s is passing", check.Node, check.ServiceName)
 		}
 
-		cc = append(cc, check)
-		c.cc = append(c.cc, check)
-		c.infof("[%s] %s is failing", check.Node, check.ServiceName)
-	}
+		// critical
+		for _, check := range hc {
+			if pos(c.cc, check) != -1 {
+				continue
+			}
 
-	return
+			cc = append(cc, check)
+			c.cc = append(c.cc, check)
+			c.infof("[%s] %s is failing", check.Node, check.ServiceName)
+		}
+
+		if len(cc) > 0 || len(pc) > 0 {
+			return
+		}
+
+		time.Sleep(c.interval)
+	}
 }
 
 // infof prints a debug message to stderr when debug mode is enabled

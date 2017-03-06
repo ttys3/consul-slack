@@ -19,8 +19,6 @@ func main() {
 	defer handleExitErr()
 
 	var (
-		interval = time.Second
-
 		slackCfg = &slack.Config{
 			Channel:  "#consul",
 			Username: "consul",
@@ -31,14 +29,15 @@ func main() {
 			Address:    "127.0.0.1:8500",
 			Scheme:     "http",
 			Datacenter: "dc1",
+			Interval:   time.Second,
 		}
 	)
 
-	flag.DurationVar(&interval, "interval", interval, "interval between consul api requests")
 	flag.StringVar(&slackCfg.WebhookURL, "slack-url", slackCfg.WebhookURL, "slack webhook url [required]")
 	flag.StringVar(&slackCfg.Channel, "slack-channel", slackCfg.Channel, "slack channel name")
 	flag.StringVar(&slackCfg.Username, "slack-username", slackCfg.Username, "slack user name")
 	flag.StringVar(&slackCfg.IconURL, "slack-icon", slackCfg.IconURL, "slack user avatar url")
+	flag.DurationVar(&consulCfg.Interval, "consul-interval", consulCfg.Interval, "interval between consul api requests")
 	flag.StringVar(&consulCfg.Address, "consul-address", consulCfg.Address, "address of the consul server")
 	flag.StringVar(&consulCfg.Scheme, "consul-scheme", consulCfg.Scheme, "uri scheme of the consul server")
 	flag.StringVar(&consulCfg.Datacenter, "consul-datacenter", consulCfg.Datacenter, "datacenter to use")
@@ -79,8 +78,6 @@ func main() {
 		for _, c := range pc {
 			s.Good("[%s] %s service is passing", c.Node, c.ServiceName)
 		}
-
-		time.Sleep(interval)
 	}
 }
 
