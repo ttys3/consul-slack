@@ -51,7 +51,7 @@ type Config struct {
 	Address    string
 	Scheme     string
 	Datacenter string
-	Interval  time.Duration
+	Interval   time.Duration
 }
 
 // Consul is the consul server client
@@ -105,7 +105,22 @@ func (c *Consul) startSession() error {
 	}()
 
 	// lock
+	var waitIndex uint64
+
 	for {
+		kv, _, err := c.kvAPI.Get(lockKey, &api.QueryOptions{
+			WaitTime:  15 * time.Second,
+			WaitIndex: waitIndex,
+		})
+
+		if err != nil {
+			return err
+		}
+
+		if kv != nil {
+			waitIndex = kv.ModifyIndex
+		}
+
 		ok, _, err := c.kvAPI.Acquire(c.lock, nil)
 		if err != nil {
 			return err
@@ -116,9 +131,6 @@ func (c *Consul) startSession() error {
 			c.locked = true
 			break
 		}
-
-		// wait before next iteration
-		time.Sleep(time.Second)
 	}
 
 	return nil
@@ -234,7 +246,8 @@ func (c *Consul) Next() (cc api.HealthChecks, pc api.HealthChecks, err error) {
 				return
 			}
 
-			t = time.NewTimer(c.interval)
+			//t = time.NewTimer(c.interval)
+			t = time.NewTimer(10000 * time.Second)
 		}
 	}
 }
