@@ -79,26 +79,11 @@ func (c *Consul) startSession() error {
 	c.infof("%s created", sess)
 	c.infof("%s lock", sess)
 
-	// lock
+	locked := false
 	lock := &api.KVPair{
 		Key:   lockKey,
 		Value: []byte{'o', 'k'},
 		Session: sess,
-	}
-
-	for {
-		ok, _, err := c.kvAPI.Acquire(lock, nil)
-		if err != nil {
-			return err
-		}
-
-		if ok {
-			c.infof("%s acquired", sess)
-			break
-		}
-
-		// wait before next iteration
-		time.Sleep(time.Second)
 	}
 
 	// renew session in the background
@@ -108,13 +93,15 @@ func (c *Consul) startSession() error {
 			select {
 			case <-c.stopCh:
 				// unlock
-				c.infof("%s release", sess)
-				_, _, err := c.kvAPI.Release(lock, nil)
-				if err != nil {
-					c.infof("release lock error: %v", err)
+				if locked {
+					c.infof("%s release", sess)
+					_, _, err := c.kvAPI.Release(lock, nil)
+					if err != nil {
+						c.infof("release lock error: %v", err)
+					}
 				}
 
-				// destroy
+				// destroy session
 				c.infof("%s destroy", sess)
 				_, err = c.sessionAPI.Destroy(sess, nil)
 				if err != nil {
@@ -131,6 +118,23 @@ func (c *Consul) startSession() error {
 			}
 		}
 	}()
+
+	// lock
+	for {
+		ok, _, err := c.kvAPI.Acquire(lock, nil)
+		if err != nil {
+			return err
+		}
+
+		if ok {
+			c.infof("%s acquired", sess)
+			locked = true
+			break
+		}
+
+		// wait before next iteration
+		time.Sleep(time.Second)
+	}
 
 	return nil
 }
