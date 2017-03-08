@@ -74,16 +74,15 @@ type Consul struct {
 }
 
 var (
-	sessionTTL           = "30s"
-	sessionRenewInterval = 15 * time.Second
-	waitTime             = 15 * time.Second
+	ttl      = "30s"
+	waitTime = 15 * time.Second
 )
 
 // startSession creates new consul session and holds an unique lock
 func (c *Consul) startSession() error {
 	sess, _, err := c.sessionAPI.Create(&api.SessionEntry{
 		Behavior: "delete",
-		TTL:      sessionTTL,
+		TTL:      ttl,
 	}, nil)
 
 	if err != nil {
@@ -91,32 +90,21 @@ func (c *Consul) startSession() error {
 	}
 
 	c.infof("%s created", sess)
-	c.infof("%s lock", sess)
 
+	go func() {
+		if err = c.sessionAPI.RenewPeriodic(ttl, sess, nil, c.stopCh); err != nil {
+			c.infof("% renew error %v", err)
+		}
+	}()
+
+	// lock
+	c.infof("%s lock", sess)
 	c.lock = &api.KVPair{
 		Key:     lockKey,
 		Value:   []byte{'o', 'k'},
 		Session: sess,
 	}
 
-	// renew session in the background
-	go func() {
-	Loop:
-		for {
-			select {
-			case <-c.stopCh:
-				break Loop
-			case <-time.After(sessionRenewInterval):
-				_, _, err := c.sessionAPI.Renew(sess, nil)
-				if err != nil {
-					c.infof("renew session error: %v", err)
-					return
-				}
-			}
-		}
-	}()
-
-	// lock
 	var waitIndex uint64
 
 	for {
