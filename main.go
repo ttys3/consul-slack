@@ -17,7 +17,9 @@ var exitErr error
 
 func main() {
 	// make sure that all defers are executed before program exits
-	defer fail(exitErr)
+	defer func() {
+		fail(exitErr)
+	}()
 
 	var (
 		slackCfg = &slack.Config{
@@ -66,21 +68,25 @@ func main() {
 	}()
 
 	for {
-		cc, pc, err := c.Next()
+		checks, err := c.Next()
 		if err != nil {
+			if err == consul.ErrClosed {
+				return
+			}
+
 			exitErr = err
 			return
 		}
 
-		if len(cc) == 0 && len(pc) == 0 && err == nil {
-			return
-		}
-
-		for _, c := range cc {
-			s.Danger("[%s] %s service is critical", c.Node, c.ServiceName)
-		}
-		for _, c := range pc {
-			s.Good("[%s] %s service is passing", c.Node, c.ServiceName)
+		for _, c := range checks {
+			switch c.Status {
+			case "critical":
+				s.Danger("[%s] %s service is critical", c.Node, c.ServiceName)
+			case "passing":
+				s.Good("[%s] %s service is back to normal", c.Node, c.ServiceName)
+			case "warning":
+				s.Warning("[%s] %s is having problems", c.Node, c.ServiceName)
+			}
 		}
 	}
 }

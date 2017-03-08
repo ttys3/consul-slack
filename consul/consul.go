@@ -2,6 +2,7 @@ package consul
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -13,6 +14,8 @@ const (
 	lockKey  = "consul-slack/.lock"
 	stateKey = "consul-slack/state"
 )
+
+var ErrClosed = errors.New("consul: closed")
 
 // New creates new consul client
 func New(cfg *Config) (*Consul, error) {
@@ -37,15 +40,12 @@ func New(cfg *Config) (*Consul, error) {
 	}
 
 	cc := &Consul{
-		kvAPI:      c.KV(),
-		healthAPI:  c.Health(),
-		sessionAPI: c.Session(),
-
+		api:    c,
 		stopCh: make(chan struct{}),
-		nextCh: make(chan *event),
+		nextCh: make(chan *payload),
 	}
 
-	if err = cc.startSession(); err != nil {
+	if err = cc.createSession(); err != nil {
 		return nil, err
 	}
 
@@ -63,14 +63,11 @@ type Config struct {
 
 // Consul is the consul server client
 type Consul struct {
-	kvAPI      *api.KV
-	healthAPI  *api.Health
-	sessionAPI *api.Session
-
+	api    *api.Client
 	lock   *api.KVPair
 	locked bool
 	stopCh chan struct{}
-	nextCh chan *event
+	nextCh chan *payload
 }
 
 var (
@@ -78,37 +75,48 @@ var (
 	waitTime = 15 * time.Second
 )
 
-// startSession creates new consul session and holds an unique lock
-func (c *Consul) startSession() error {
-	sess, _, err := c.sessionAPI.Create(&api.SessionEntry{
-		Behavior: "delete",
-		TTL:      ttl,
+// createSession creates new consul session and holds an unique lock
+func (c *Consul) createSession() error {
+	sess, _, err := c.api.Session().Create(&api.SessionEntry{
+		Behavior:  "delete",
+		TTL:       ttl,
+		LockDelay: time.Second,
 	}, nil)
 
 	if err != nil {
 		return err
 	}
 
-	c.infof("%s created", sess)
-
-	go func() {
-		if err = c.sessionAPI.RenewPeriodic(ttl, sess, nil, c.stopCh); err != nil {
-			c.infof("% renew error %v", err)
-		}
-	}()
-
-	// lock
-	c.infof("%s lock", sess)
 	c.lock = &api.KVPair{
 		Key:     lockKey,
 		Value:   []byte{'o', 'k'},
 		Session: sess,
 	}
 
+	c.infof("created")
+
+	// renew in the background
+	go func() {
+		if err = c.api.Session().RenewPeriodic(ttl, sess, nil, c.stopCh); err != nil {
+			c.infof("renew session error: %v", err)
+		}
+	}()
+
+	// destroy session when the stopCh is closed
+	go func() {
+		<-c.stopCh
+		if err := c.destroySession(); err != nil {
+			c.infof("destroy session error: %v", err)
+		}
+	}()
+
+	// acquire lock
+	c.infof("lock")
+
 	var waitIndex uint64
 
 	for {
-		kv, _, err := c.kvAPI.Get(lockKey, &api.QueryOptions{
+		kv, _, err := c.api.KV().Get(lockKey, &api.QueryOptions{
 			WaitTime:  waitTime,
 			WaitIndex: waitIndex,
 		})
@@ -121,13 +129,13 @@ func (c *Consul) startSession() error {
 			waitIndex = kv.ModifyIndex
 		}
 
-		ok, _, err := c.kvAPI.Acquire(c.lock, nil)
+		ok, _, err := c.api.KV().Acquire(c.lock, nil)
 		if err != nil {
 			return err
 		}
 
 		if ok {
-			c.infof("%s acquired", sess)
+			c.infof("acquired")
 			c.locked = true
 			break
 		}
@@ -136,30 +144,117 @@ func (c *Consul) startSession() error {
 	return nil
 }
 
-// Close shuts down Next() function
-func (c *Consul) Close() error {
+// destroySession destroys consul agent session
+func (c *Consul) destroySession() error {
 	if c.locked {
-		c.infof("%s release", c.lock.Session)
-		_, _, err := c.kvAPI.Release(c.lock, nil)
+		c.infof("release")
+		_, _, err := c.api.KV().Release(c.lock, nil)
 		if err != nil {
 			return err
 		}
 	}
 
 	// destroy session
-	c.infof("%s destroy", c.lock.Session)
-	_, err := c.sessionAPI.Destroy(c.lock.Session, nil)
+	c.infof("destroy")
+	_, err := c.api.Session().Destroy(c.lock.Session, nil)
 	if err != nil {
 		return err
 	}
-
-	close(c.stopCh)
 	return nil
+}
+
+// Next returns slices of critical and passing events
+func (c *Consul) Next() (api.HealthChecks, error) {
+	for {
+		select {
+		case ev := <-c.nextCh:
+			if ev == nil {
+				return nil, ErrClosed
+			}
+			return ev.hcs, ev.err
+		case <-c.stopCh:
+			return nil, ErrClosed
+		}
+	}
+}
+
+type payload struct {
+	hcs api.HealthChecks
+	err error
+}
+
+func (c *Consul) watch() {
+	// load state
+	curr, err := c.load()
+	if err != nil {
+		c.infof("load state error %v", err)
+	}
+	c.infof("state is %v", curr)
+
+	next := api.HealthChecks{}
+	meta := &api.QueryMeta{}
+
+	for {
+		select {
+		case <-c.stopCh:
+			goto End
+		default:
+		}
+
+		hcks := api.HealthChecks{}
+		next, meta, err = c.api.Health().State("any", &api.QueryOptions{
+			AllowStale: true,
+			WaitIndex:  meta.LastIndex,
+			WaitTime:   waitTime,
+		})
+
+		if err != nil {
+			c.nextCh <- &payload{err: err}
+			goto End
+		}
+
+	Loop:
+		for _, check := range next {
+			// skip self check
+			if check.ServiceID == "" {
+				continue
+			}
+
+			for _, ch := range curr {
+				if check.ServiceID == ch.ServiceID {
+					if check.Status == ch.Status {
+						continue Loop
+					}
+					goto Add
+				}
+			}
+
+		Add:
+			hcks = append(hcks, check)
+			c.infof("%s:%s %s", check.Node, check.ServiceID, check.Status)
+		}
+
+		// send data only when we have any
+		if len(hcks) == 0 {
+			continue
+		}
+
+		c.nextCh <- &payload{hcs: hcks}
+
+		// save state
+		curr = next
+		if err = c.dump(curr); err != nil {
+			c.nextCh <- &payload{err: err}
+			goto End
+		}
+	}
+End:
+	close(c.nextCh)
 }
 
 // load loads consul state from kv store
 func (c *Consul) load() (api.HealthChecks, error) {
-	kv, _, err := c.kvAPI.Get(stateKey, nil)
+	kv, _, err := c.api.KV().Get(stateKey, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +275,7 @@ func (c *Consul) dump(chs api.HealthChecks) error {
 		return err
 	}
 
-	_, err = c.kvAPI.Put(&api.KVPair{
+	_, err = c.api.KV().Put(&api.KVPair{
 		Key:   stateKey,
 		Value: b,
 	}, nil)
@@ -188,112 +283,13 @@ func (c *Consul) dump(chs api.HealthChecks) error {
 	return err
 }
 
-// Next returns slices of critical and passing events
-func (c *Consul) Next() (api.HealthChecks, api.HealthChecks, error) {
-	for {
-		select {
-		case ev := <-c.nextCh:
-			return ev.cc, ev.pc, ev.err
-		case <-c.stopCh:
-			return nil, nil, nil
-		}
-	}
-}
-
-type event struct {
-	cc  api.HealthChecks
-	pc  api.HealthChecks
-	err error
-}
-
-func (c *Consul) watch() {
-	// load state
-	sc, err := c.load()
-	if err != nil {
-		c.infof("load state error %v", err)
-	}
-	c.infof("initial state is %v", sc)
-
-	hc := api.HealthChecks{}
-	meta := &api.QueryMeta{}
-
-	for {
-		select {
-		case <-c.stopCh:
-			goto End
-		default:
-		}
-
-		pc := api.HealthChecks{}
-		cc := api.HealthChecks{}
-		hc, meta, err = c.healthAPI.State("critical", &api.QueryOptions{
-			AllowStale: true,
-			WaitIndex:  meta.LastIndex,
-			WaitTime:   waitTime,
-		})
-
-		if err != nil {
-			c.nextCh <- &event{err: err}
-			goto End
-		}
-
-		// passing
-		for _, check := range sc {
-			if pos(hc, check) != -1 {
-				continue
-			}
-
-			pc = append(pc, check)
-			sc = del(sc, check)
-			c.infof("[%s] %s is passing", check.Node, check.ServiceName)
-		}
-
-		// critical
-		for _, check := range hc {
-			if pos(sc, check) != -1 {
-				continue
-			}
-
-			cc = append(cc, check)
-			sc = append(sc, check)
-			c.infof("[%s] %s is failing", check.Node, check.ServiceName)
-		}
-
-		// save state
-		if err = c.dump(sc); err != nil {
-			c.nextCh <- &event{err: err}
-			goto End
-		}
-
-		if len(cc) > 0 || len(pc) > 0 {
-			c.nextCh <- &event{cc: cc, pc: pc}
-		}
-	}
-
-End:
-	close(c.nextCh)
+// Close shuts down Next() function
+func (c *Consul) Close() error {
+	close(c.stopCh)
+	return nil
 }
 
 // infof prints a debug message to stderr when debug mode is enabled
 func (c *Consul) infof(s string, v ...interface{}) {
 	fmt.Fprintf(os.Stderr, "consul: "+s+"\n", v...)
-}
-
-// pos finds check's position in health checks slice or return -1
-func pos(hcs api.HealthChecks, hc *api.HealthCheck) int {
-	for i, c := range hcs {
-		if c.ServiceID == hc.ServiceID {
-			return i
-		}
-	}
-	return -1
-}
-
-// del deletes the named element from health checks slice
-func del(hcs api.HealthChecks, hc *api.HealthCheck) api.HealthChecks {
-	i := pos(hcs, hc)
-	if i == -1 {
-		return hcs
-	}
-	return append(hcs[:i], hcs[i+1:]...)
 }

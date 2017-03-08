@@ -49,18 +49,23 @@ type attachment struct {
 	Text  string `json:"text"`
 }
 
-// Danger sends a danger message
+// Danger is equivalent of Send("danger", ...)
 func (s *Slack) Danger(msg string, v ...interface{}) error {
-	return s.send("danger", msg, v...)
+	return s.Send("danger", msg, v...)
 }
 
-// Good sends a good message
+// Good is equivalent of Send("good", ...)
 func (s *Slack) Good(msg string, v ...interface{}) error {
-	return s.send("good", msg, v...)
+	return s.Send("good", msg, v...)
 }
 
-// send sends message to webhook url
-func (s *Slack) send(color, msg string, v ...interface{}) error {
+// Warning is equivalent of Send("warning", ...)
+func (s *Slack) Warning(msg string, v ...interface{}) error {
+	return s.Send("warning", msg, v...)
+}
+
+// Send sends message to webhook url
+func (s *Slack) Send(color, msg string, v ...interface{}) error {
 	if s.cfg.WebhookURL == "" {
 		return nil
 	}

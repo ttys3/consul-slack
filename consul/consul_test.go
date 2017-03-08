@@ -51,7 +51,8 @@ func TestConsul_Next(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	testNext(t, "fail", 2*time.Second, c1, 1, 0)
+	//time.Sleep(time.Second)
+	testNext(t, "fail", c1, 1, 0)
 
 	// start service
 	go func() {
@@ -64,14 +65,20 @@ func TestConsul_Next(t *testing.T) {
 		s.Serve(lis)
 	}()
 
+	if err = c1.Close(); err != nil {
+		t.Fatal(err)
+	}
+
 	ch := make(chan struct{})
 	go func() {
+		defer close(ch)
+
 		c2, err := New(&Config{})
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		testNext(t, "pass", 2*time.Second, c2, 0, 1)
+		testNext(t, "pass", c2, 0, 1)
 
 		go func() {
 			if err := c2.Close(); err != nil {
@@ -79,30 +86,32 @@ func TestConsul_Next(t *testing.T) {
 			}
 		}()
 
-		testNext(t, "gone", time.Duration(0), c2, 0, 0)
-		close(ch)
+		_, err = c2.Next()
+		if err != ErrClosed {
+			t.Errorf("_, err = c.Next(); err = %v, want %v", err, ErrClosed)
+		}
 	}()
-
-	if err = c1.Close(); err != nil {
-		t.Fatal(err)
-	}
 
 	<-ch
 }
 
-func testNext(t *testing.T, name string, delay time.Duration, c *Consul, ccl, pcl int) {
-	time.Sleep(delay)
-
-	cc, pc, err := c.Next()
+func testNext(t *testing.T, name string, c *Consul, ccl, pcl int) {
+	hcs, err := c.Next()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if len(cc) != ccl {
-		t.Errorf("%s: len(cc) = %d, want %d", name, len(cc), ccl)
-	}
-	if len(pc) != pcl {
-		t.Errorf("%s: len(pc) = %d, want %d", name, len(pc), pcl)
+	for status, want := range map[string]int{"critical": ccl, "passing": pcl} {
+		l := 0
+		for _, hc := range hcs {
+			if hc.Status == status {
+				l++
+			}
+		}
+
+		if want != l {
+			t.Errorf("%s: [%s] checks = %d, want %d", name, status, want, l)
+		}
 	}
 }
 
