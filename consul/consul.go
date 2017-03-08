@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	lockKey  = "consul-slack-lock"
-	stateKey = "consul-slack-state"
+	lockKey  = "consul-slack/.lock"
+	stateKey = "consul-slack/state"
 )
 
 // New creates new consul client
@@ -25,6 +25,12 @@ func New(cfg *Config) (*Consul, error) {
 		Scheme:     cfg.Scheme,
 		Datacenter: cfg.Datacenter,
 	})
+
+	// check agent connection
+	_, err = c.Status().Leader()
+	if err != nil {
+		return nil, err
+	}
 
 	if err != nil {
 		return nil, err
@@ -67,11 +73,17 @@ type Consul struct {
 	cc       api.HealthChecks
 }
 
+var (
+	sessionTTL           = "30s"
+	sessionRenewInterval = 15 * time.Second
+	waitTime             = 15 * time.Second
+)
+
 // startSession creates new consul session and holds an unique lock
 func (c *Consul) startSession() error {
 	sess, _, err := c.sessionAPI.Create(&api.SessionEntry{
 		Behavior: "delete",
-		TTL:      "30s",
+		TTL:      sessionTTL,
 	}, nil)
 
 	if err != nil {
@@ -94,7 +106,7 @@ func (c *Consul) startSession() error {
 			select {
 			case <-c.stopCh:
 				break Loop
-			case <-time.After(15 * time.Second):
+			case <-time.After(sessionRenewInterval):
 				_, _, err := c.sessionAPI.Renew(sess, nil)
 				if err != nil {
 					c.infof("renew session error: %v", err)
@@ -109,7 +121,7 @@ func (c *Consul) startSession() error {
 
 	for {
 		kv, _, err := c.kvAPI.Get(lockKey, &api.QueryOptions{
-			WaitTime:  15 * time.Second,
+			WaitTime:  waitTime,
 			WaitIndex: waitIndex,
 		})
 
@@ -246,8 +258,7 @@ func (c *Consul) Next() (cc api.HealthChecks, pc api.HealthChecks, err error) {
 				return
 			}
 
-			//t = time.NewTimer(c.interval)
-			t = time.NewTimer(10000 * time.Second)
+			t = time.NewTimer(c.interval)
 		}
 	}
 }

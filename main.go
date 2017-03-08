@@ -23,7 +23,7 @@ func main() {
 	var (
 		slackCfg = &slack.Config{
 			Channel:  "#consul",
-			Username: "consul",
+			Username: "Consul",
 			IconURL:  "https://www.consul.io/assets/images/logo_large-475cebb0.png",
 		}
 
