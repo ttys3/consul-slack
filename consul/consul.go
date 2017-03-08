@@ -41,13 +41,15 @@ func New(cfg *Config) (*Consul, error) {
 		healthAPI:  c.Health(),
 		sessionAPI: c.Session(),
 
-		interval: cfg.Interval,
-		stopCh:   make(chan struct{}),
+		stopCh: make(chan struct{}),
+		nextCh: make(chan *event),
 	}
 
 	if err = cc.startSession(); err != nil {
 		return nil, err
 	}
+
+	go cc.watch()
 
 	return cc, nil
 }
@@ -57,7 +59,6 @@ type Config struct {
 	Address    string
 	Scheme     string
 	Datacenter string
-	Interval   time.Duration
 }
 
 // Consul is the consul server client
@@ -66,11 +67,10 @@ type Consul struct {
 	healthAPI  *api.Health
 	sessionAPI *api.Session
 
-	lock     *api.KVPair
-	locked   bool
-	stopCh   chan struct{}
-	interval time.Duration
-	cc       api.HealthChecks
+	lock   *api.KVPair
+	locked bool
+	stopCh chan struct{}
+	nextCh chan *event
 }
 
 var (
@@ -189,66 +189,89 @@ func (c *Consul) dump(chs api.HealthChecks) error {
 }
 
 // Next returns slices of critical and passing events
-func (c *Consul) Next() (cc api.HealthChecks, pc api.HealthChecks, err error) {
-	var hc api.HealthChecks
-
-	// start immediately
-	t := time.NewTimer(time.Duration(0))
-
-	if c.cc == nil {
-		c.cc, err = c.load()
-		if err != nil {
-			return
+func (c *Consul) Next() (api.HealthChecks, api.HealthChecks, error) {
+	for {
+		select {
+		case ev := <-c.nextCh:
+			return ev.cc, ev.pc, ev.err
+		case <-c.stopCh:
+			return nil, nil, nil
 		}
-
-		c.infof("initial state is %v", c.cc)
 	}
+}
+
+type event struct {
+	cc  api.HealthChecks
+	pc  api.HealthChecks
+	err error
+}
+
+func (c *Consul) watch() {
+	// load state
+	sc, err := c.load()
+	if err != nil {
+		c.infof("load state error %v", err)
+	}
+	c.infof("initial state is %v", sc)
+
+	hc := api.HealthChecks{}
+	meta := &api.QueryMeta{}
 
 	for {
 		select {
 		case <-c.stopCh:
+			goto End
+		default:
+		}
 
-			return
-		case <-t.C:
-			hc, _, err = c.healthAPI.State("critical", nil)
-			if err != nil {
-				return
+		pc := api.HealthChecks{}
+		cc := api.HealthChecks{}
+		hc, meta, err = c.healthAPI.State("critical", &api.QueryOptions{
+			AllowStale: true,
+			WaitIndex:  meta.LastIndex,
+			WaitTime:   waitTime,
+		})
+
+		if err != nil {
+			c.nextCh <- &event{err: err}
+			goto End
+		}
+
+		// passing
+		for _, check := range sc {
+			if pos(hc, check) != -1 {
+				continue
 			}
 
-			// passing
-			for _, check := range c.cc {
-				if pos(hc, check) != -1 {
-					continue
-				}
+			pc = append(pc, check)
+			sc = del(sc, check)
+			c.infof("[%s] %s is passing", check.Node, check.ServiceName)
+		}
 
-				pc = append(pc, check)
-				c.cc = del(c.cc, check)
-				c.infof("[%s] %s is passing", check.Node, check.ServiceName)
+		// critical
+		for _, check := range hc {
+			if pos(sc, check) != -1 {
+				continue
 			}
 
-			// critical
-			for _, check := range hc {
-				if pos(c.cc, check) != -1 {
-					continue
-				}
+			cc = append(cc, check)
+			sc = append(sc, check)
+			c.infof("[%s] %s is failing", check.Node, check.ServiceName)
+		}
 
-				cc = append(cc, check)
-				c.cc = append(c.cc, check)
-				c.infof("[%s] %s is failing", check.Node, check.ServiceName)
-			}
+		// save state
+		if err = c.dump(sc); err != nil {
+			c.nextCh <- &event{err: err}
+			goto End
+		}
 
-			// save state
-			if err = c.dump(c.cc); err != nil {
-				return
-			}
-
-			if len(cc) > 0 || len(pc) > 0 {
-				return
-			}
-
-			t = time.NewTimer(c.interval)
+		if len(cc) > 0 || len(pc) > 0 {
+			c.nextCh <- &event{cc: cc, pc: pc}
 		}
 	}
+
+End:
+	close(c.nextCh)
 }
 
 // infof prints a debug message to stderr when debug mode is enabled

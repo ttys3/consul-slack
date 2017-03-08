@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/amenzhinsky/consul-slack/consul"
 	"github.com/amenzhinsky/consul-slack/slack"
@@ -18,7 +17,7 @@ var exitErr error
 
 func main() {
 	// make sure that all defers are executed before program exits
-	defer handleExitErr()
+	defer fail(exitErr)
 
 	var (
 		slackCfg = &slack.Config{
@@ -31,7 +30,6 @@ func main() {
 			Address:    "127.0.0.1:8500",
 			Scheme:     "http",
 			Datacenter: "dc1",
-			Interval:   time.Second,
 		}
 	)
 
@@ -39,7 +37,6 @@ func main() {
 	flag.StringVar(&slackCfg.Channel, "slack-channel", slackCfg.Channel, "slack channel name")
 	flag.StringVar(&slackCfg.Username, "slack-username", slackCfg.Username, "slack user name")
 	flag.StringVar(&slackCfg.IconURL, "slack-icon", slackCfg.IconURL, "slack user avatar url")
-	flag.DurationVar(&consulCfg.Interval, "consul-interval", consulCfg.Interval, "interval between consul api requests")
 	flag.StringVar(&consulCfg.Address, "consul-address", consulCfg.Address, "address of the consul server")
 	flag.StringVar(&consulCfg.Scheme, "consul-scheme", consulCfg.Scheme, "uri scheme of the consul server")
 	flag.StringVar(&consulCfg.Datacenter, "consul-datacenter", consulCfg.Datacenter, "datacenter to use")
@@ -62,7 +59,7 @@ func main() {
 	}
 
 	ch := make(chan os.Signal)
-	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	go func() {
 		<-ch
 		c.Close()
@@ -95,8 +92,4 @@ func fail(err error) {
 
 	fmt.Fprintf(os.Stderr, "error: %s\n", err.Error())
 	os.Exit(1)
-}
-
-func handleExitErr() {
-	fail(exitErr)
 }
