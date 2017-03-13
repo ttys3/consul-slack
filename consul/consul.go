@@ -184,6 +184,8 @@ type payload struct {
 }
 
 func (c *Consul) watch() {
+	defer close(c.nextCh)
+
 	// load state
 	curr, err := c.load()
 	if err != nil {
@@ -197,7 +199,7 @@ func (c *Consul) watch() {
 	for {
 		select {
 		case <-c.stopCh:
-			goto End
+			break
 		default:
 		}
 
@@ -210,8 +212,12 @@ func (c *Consul) watch() {
 
 		if err != nil {
 			c.nextCh <- &payload{err: err}
-			goto End
+			break
 		}
+
+		// we track modified service states to avoid multiple notifications
+		// on the same service with the same status
+		mods := map[string]bool{}
 
 	Loop:
 		for _, check := range next {
@@ -222,14 +228,18 @@ func (c *Consul) watch() {
 
 			for _, ch := range curr {
 				if check.ServiceID == ch.ServiceID {
-					if check.Status == ch.Status {
-						continue Loop
+					if check.Status != ch.Status {
+						if mods[check.ServiceID] {
+							continue Loop
+						}
+
+						// service status has changed
+						mods[check.ServiceID] = true
+						break
 					}
-					goto Add
 				}
 			}
 
-		Add:
 			hcks = append(hcks, check)
 			c.infof("%s:%s %s", check.Node, check.ServiceID, check.Status)
 		}
@@ -245,11 +255,9 @@ func (c *Consul) watch() {
 		curr = next
 		if err = c.dump(curr); err != nil {
 			c.nextCh <- &payload{err: err}
-			goto End
+			break
 		}
 	}
-End:
-	close(c.nextCh)
 }
 
 // load loads consul state from kv store
@@ -260,7 +268,6 @@ func (c *Consul) load() (api.HealthChecks, error) {
 	}
 
 	chs := api.HealthChecks{}
-
 	if kv != nil {
 		err = json.Unmarshal(kv.Value, &chs)
 	}
