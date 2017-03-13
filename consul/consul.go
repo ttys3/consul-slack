@@ -228,15 +228,13 @@ func (c *Consul) watch() {
 
 			for _, ch := range curr {
 				if check.ServiceID == ch.ServiceID {
-					if check.Status != ch.Status {
-						if mods[check.ServiceID] {
-							continue Loop
-						}
-
-						// service status has changed
-						mods[check.ServiceID] = true
-						break
+					if check.Status == ch.Status || (check.Status != ch.Status && mods[check.ServiceID]) {
+						continue Loop
 					}
+
+					// service status has changed
+					mods[check.ServiceID] = true
+					break
 				}
 			}
 
