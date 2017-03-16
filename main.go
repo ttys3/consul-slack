@@ -95,7 +95,6 @@ func fail(err error) {
 	if err == nil {
 		return
 	}
-
 	fmt.Fprintf(os.Stderr, "error: %s\n", err.Error())
 	os.Exit(1)
 }

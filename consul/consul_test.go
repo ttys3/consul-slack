@@ -39,6 +39,16 @@ func TestConsul_Next(t *testing.T) {
 				Interval: "1s",
 				Timeout:  "1s",
 			},
+			//{
+			//	Notes:    "TCP Check",
+			//	TCP:      ":" + strconv.Itoa(port),
+			//	Interval: "1s",
+			//	Timeout:  "1s",
+			//},
+			{
+				Notes:  "Always true",
+				Script: "/usr/bin/true",
+			},
 		},
 	})
 
@@ -109,8 +119,8 @@ func testNext(t *testing.T, name string, c *Consul, ccl, pcl int) {
 			}
 		}
 
-		if want != l {
-			t.Errorf("%s: [%s] checks = %d, want %d", name, status, want, l)
+		if l != want {
+			t.Errorf("%s: [%s] checks = %d, want %d", name, status, l, want)
 		}
 	}
 }

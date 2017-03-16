@@ -3,8 +3,8 @@ package slack
 import (
 	"bytes"
 	"encoding/json"
-	"net/http"
 	"fmt"
+	"net/http"
 )
 
 // New creates new slack client

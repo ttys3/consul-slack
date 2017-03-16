@@ -89,7 +89,7 @@ func (c *Consul) createSession() error {
 
 	c.lock = &api.KVPair{
 		Key:     lockKey,
-		Value:   []byte{'o', 'k'},
+		Value:   []byte(sess),
 		Session: sess,
 	}
 
@@ -165,17 +165,8 @@ func (c *Consul) destroySession() error {
 
 // Next returns slices of critical and passing events
 func (c *Consul) Next() (api.HealthChecks, error) {
-	for {
-		select {
-		case ev := <-c.nextCh:
-			if ev == nil {
-				return nil, ErrClosed
-			}
-			return ev.hcs, ev.err
-		case <-c.stopCh:
-			return nil, ErrClosed
-		}
-	}
+	ev := <-c.nextCh
+	return ev.hcs, ev.err
 }
 
 type payload struct {
@@ -199,6 +190,7 @@ func (c *Consul) watch() {
 	for {
 		select {
 		case <-c.stopCh:
+			c.nextCh <- &payload{err: ErrClosed}
 			break
 		default:
 		}
