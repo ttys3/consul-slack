@@ -12,15 +12,14 @@ import (
 	"github.com/amenzhinsky/consul-slack/slack"
 )
 
-// exitErr is last error occurred before the main function returns
-var exitErr error
-
 func main() {
-	// make sure that all defers are executed before program exits
-	defer func() {
-		fail(exitErr)
-	}()
+	if err := start(); err != nil {
+		fmt.Fprintln(os.Stderr, "error: "+err.Error())
+		os.Exit(1)
+	}
+}
 
+func start() error {
 	var (
 		slackCfg = &slack.Config{
 			Channel:  "#consul",
@@ -45,19 +44,17 @@ func main() {
 	flag.Parse()
 
 	if slackCfg.WebhookURL == "" {
-		fail(errors.New("slack-url is empty"))
+		return errors.New("-slack-url cannot be empty")
 	}
 
 	c, err := consul.New(consulCfg)
 	if err != nil {
-		exitErr = err
-		return
+		return err
 	}
 
 	s, err := slack.New(slackCfg)
 	if err != nil {
-		exitErr = err
-		return
+		return err
 	}
 
 	ch := make(chan os.Signal)
@@ -71,11 +68,9 @@ func main() {
 		checks, err := c.Next()
 		if err != nil {
 			if err == consul.ErrClosed {
-				return
+				return nil
 			}
-
-			exitErr = err
-			return
+			return err
 		}
 
 		for _, c := range checks {
@@ -89,12 +84,4 @@ func main() {
 			}
 		}
 	}
-}
-
-func fail(err error) {
-	if err == nil {
-		return
-	}
-	fmt.Fprintf(os.Stderr, "error: %s\n", err.Error())
-	os.Exit(1)
 }
