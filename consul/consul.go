@@ -7,6 +7,8 @@ import (
 	"os"
 	"time"
 
+	"strings"
+
 	"github.com/hashicorp/consul/api"
 )
 
@@ -164,14 +166,14 @@ func (c *Consul) destroySession() error {
 }
 
 // Next returns slices of critical and passing events
-func (c *Consul) Next() (api.HealthChecks, error) {
+func (c *Consul) Next() ([]*Change, error) {
 	ev := <-c.nextCh
-	return ev.hcs, ev.err
+	return ev.changes, ev.err
 }
 
 type payload struct {
-	hcs api.HealthChecks
-	err error
+	changes []*Change
+	err     error
 }
 
 func (c *Consul) watch() {
@@ -184,8 +186,8 @@ func (c *Consul) watch() {
 	}
 	c.infof("state is %v", curr)
 
-	next := api.HealthChecks{}
 	meta := &api.QueryMeta{}
+	data := api.HealthChecks{}
 
 	for {
 		select {
@@ -195,8 +197,7 @@ func (c *Consul) watch() {
 		default:
 		}
 
-		hcks := api.HealthChecks{}
-		next, meta, err = c.api.Health().State("any", &api.QueryOptions{
+		data, meta, err = c.api.Health().State("any", &api.QueryOptions{
 			AllowStale: true,
 			WaitIndex:  meta.LastIndex,
 			WaitTime:   waitTime,
@@ -207,39 +208,27 @@ func (c *Consul) watch() {
 			break
 		}
 
-		// we track modified service states to avoid multiple notifications
-		// on the same service with the same status
-		mods := map[string]bool{}
+		mods := []*Change{}
+		next := mkState(data)
 
-	Loop:
-		for _, check := range next {
-			// skip self check
-			if check.ServiceID == "" {
-				continue
+		for id, status := range next {
+			if curr[id] != status {
+				chunks := strings.SplitN(id, ":", 2)
+
+				mods = append(mods, &Change{
+					Node:      chunks[0],
+					ServiceID: chunks[1],
+					Status:    status,
+				})
 			}
-
-			for _, ch := range curr {
-				if check.ServiceID == ch.ServiceID {
-					if check.Status == ch.Status || (check.Status != ch.Status && mods[check.ServiceID]) {
-						continue Loop
-					}
-
-					// service status has changed
-					mods[check.ServiceID] = true
-					break
-				}
-			}
-
-			hcks = append(hcks, check)
-			c.infof("%s:%s %s", check.Node, check.ServiceID, check.Status)
 		}
 
-		// send data only when we have any
-		if len(hcks) == 0 {
+		if len(mods) == 0 {
 			continue
 		}
 
-		c.nextCh <- &payload{hcs: hcks}
+		// send data only when we have any
+		c.nextCh <- &payload{changes: mods}
 
 		// save state
 		curr = next
@@ -250,24 +239,58 @@ func (c *Consul) watch() {
 	}
 }
 
+// statuses is map of status name to its weight
+var statuses = map[string]int{
+	"passing":  0,
+	"warning":  1,
+	"critical": 2,
+}
+
+// state is current state
+type state map[string]string
+
+// mkState converts a health checks list into internal state representation
+func mkState(checks api.HealthChecks) state {
+	s := make(state, len(checks))
+	for _, check := range checks {
+		if check.ServiceID == "" {
+			continue
+		}
+
+		id := check.Node + ":" + check.ServiceID
+		if status, ok := s[id]; !ok || statuses[status] < statuses[check.Status] {
+			s[id] = check.Status
+		}
+	}
+
+	return s
+}
+
+// Change is a service state change
+type Change struct {
+	Node      string
+	ServiceID string
+	Status    string
+}
+
 // load loads consul state from kv store
-func (c *Consul) load() (api.HealthChecks, error) {
+func (c *Consul) load() (state, error) {
 	kv, _, err := c.api.KV().Get(stateKey, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	chs := api.HealthChecks{}
+	s := state{}
 	if kv != nil {
-		err = json.Unmarshal(kv.Value, &chs)
+		err = json.Unmarshal(kv.Value, &s)
 	}
 
-	return chs, err
+	return s, err
 }
 
 // dump saves consul state to kv store
-func (c *Consul) dump(chs api.HealthChecks) error {
-	b, err := json.Marshal(chs)
+func (c *Consul) dump(s state) error {
+	b, err := json.Marshal(s)
 	if err != nil {
 		return err
 	}

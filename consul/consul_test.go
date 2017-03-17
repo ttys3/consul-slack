@@ -39,12 +39,12 @@ func TestConsul_Next(t *testing.T) {
 				Interval: "1s",
 				Timeout:  "1s",
 			},
-			//{
-			//	Notes:    "TCP Check",
-			//	TCP:      ":" + strconv.Itoa(port),
-			//	Interval: "1s",
-			//	Timeout:  "1s",
-			//},
+			{
+				Notes:    "TCP Check",
+				TCP:      ":" + strconv.Itoa(port),
+				Interval: "1s",
+				Timeout:  "1s",
+			},
 			{
 				Notes:  "Always true",
 				Script: "/usr/bin/true",
