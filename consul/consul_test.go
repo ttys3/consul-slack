@@ -12,7 +12,7 @@ import (
 	"github.com/hashicorp/consul/api"
 )
 
-func TestConsul_Next(t *testing.T) {
+func TestConsul_All(t *testing.T) {
 	p := startConsul(t)
 	defer stopConsul(t, p)
 
@@ -56,13 +56,16 @@ func TestConsul_Next(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c1, err := New(&Config{})
+	c1, err := New(&Config{Debug: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	//time.Sleep(time.Second)
-	testNext(t, "fail", c1, 1, 0)
+	testNext(t, c1, Critical)
+	if err = c1.Close(); err != nil {
+		t.Fatal(err)
+	}
+	testClosed(t, c1)
 
 	// start service
 	go func() {
@@ -75,53 +78,44 @@ func TestConsul_Next(t *testing.T) {
 		s.Serve(lis)
 	}()
 
-	if err = c1.Close(); err != nil {
-		t.Fatal(err)
-	}
-
 	ch := make(chan struct{})
 	go func() {
 		defer close(ch)
 
-		c2, err := New(&Config{})
+		c2, err := New(&Config{Debug: true})
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		testNext(t, "pass", c2, 0, 1)
-
+		testNext(t, c2, Passing)
 		go func() {
 			if err := c2.Close(); err != nil {
 				t.Fatal(err)
 			}
+			testClosed(t, c2)
 		}()
 
-		_, err = c2.Next()
-		if err != ErrClosed {
-			t.Errorf("_, err = c.Next(); err = %v, want %v", err, ErrClosed)
+		ev := <-c2.C
+		if ev != nil {
+			t.Errorf("ev = %v, want nil", ev)
 		}
 	}()
 
 	<-ch
 }
 
-func testNext(t *testing.T, name string, c *Consul, ccl, pcl int) {
-	hcs, err := c.Next()
-	if err != nil {
-		t.Fatal(err)
+func testNext(t *testing.T, c *Consul, status string) {
+	hc := <-c.C
+	if hc.Status != status {
+		t.Errorf("Status = %q, want %q", hc.Status, status)
 	}
+}
 
-	for status, want := range map[string]int{"critical": ccl, "passing": pcl} {
-		l := 0
-		for _, hc := range hcs {
-			if hc.Status == status {
-				l++
-			}
-		}
-
-		if l != want {
-			t.Errorf("%s: [%s] checks = %d, want %d", name, status, l, want)
-		}
+func testClosed(t *testing.T, c *Consul) {
+	select {
+	case <-c.C:
+		t.Error("c.C is not empty")
+	default:
 	}
 }
 

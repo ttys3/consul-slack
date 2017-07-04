@@ -3,9 +3,9 @@ package consul
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
-	"os"
+	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/consul/api"
@@ -43,7 +43,8 @@ func New(cfg *Config) (*Consul, error) {
 	cc := &Consul{
 		api:    c,
 		stopCh: make(chan struct{}),
-		nextCh: make(chan *payload),
+		C:      make(chan *Event, 10),
+		debug:  cfg.Debug,
 	}
 
 	if err = cc.createSession(); err != nil {
@@ -60,6 +61,7 @@ type Config struct {
 	Address    string
 	Scheme     string
 	Datacenter string
+	Debug      bool
 }
 
 // Consul is the consul server client
@@ -68,7 +70,9 @@ type Consul struct {
 	lock   *api.KVPair
 	locked bool
 	stopCh chan struct{}
-	nextCh chan *payload
+	C      chan *Event
+	debug  bool
+	mu     sync.Mutex
 }
 
 var (
@@ -78,6 +82,9 @@ var (
 
 // createSession creates new consul session and holds an unique lock
 func (c *Consul) createSession() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	sess, _, err := c.api.Session().Create(&api.SessionEntry{
 		Behavior:  "delete",
 		TTL:       ttl,
@@ -94,7 +101,7 @@ func (c *Consul) createSession() error {
 		Session: sess,
 	}
 
-	c.infof("created")
+	c.infof("session created")
 
 	// renew in the background
 	go func() {
@@ -112,7 +119,7 @@ func (c *Consul) createSession() error {
 	}()
 
 	// acquire lock
-	c.infof("lock")
+	c.infof("try lock")
 
 	var waitIndex uint64
 
@@ -136,7 +143,7 @@ func (c *Consul) createSession() error {
 		}
 
 		if ok {
-			c.infof("acquired")
+			c.infof("lock acquired")
 			c.locked = true
 			break
 		}
@@ -147,8 +154,11 @@ func (c *Consul) createSession() error {
 
 // destroySession destroys consul agent session
 func (c *Consul) destroySession() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if c.locked {
-		c.infof("release")
+		c.infof("session release")
 		_, _, err := c.api.KV().Release(c.lock, nil)
 		if err != nil {
 			return err
@@ -156,7 +166,7 @@ func (c *Consul) destroySession() error {
 	}
 
 	// destroy session
-	c.infof("destroy")
+	c.infof("session destroy")
 	_, err := c.api.Session().Destroy(c.lock.Session, nil)
 	if err != nil {
 		return err
@@ -164,19 +174,8 @@ func (c *Consul) destroySession() error {
 	return nil
 }
 
-// Next returns slices of critical and passing events
-func (c *Consul) Next() ([]*Change, error) {
-	ev := <-c.nextCh
-	return ev.changes, ev.err
-}
-
-type payload struct {
-	changes []*Change
-	err     error
-}
-
 func (c *Consul) watch() {
-	defer close(c.nextCh)
+	defer close(c.C)
 
 	// load state
 	curr, err := c.load()
@@ -191,8 +190,7 @@ func (c *Consul) watch() {
 	for {
 		select {
 		case <-c.stopCh:
-			c.nextCh <- &payload{err: ErrClosed}
-			break
+			return
 		default:
 		}
 
@@ -203,37 +201,30 @@ func (c *Consul) watch() {
 		})
 
 		if err != nil {
-			c.nextCh <- &payload{err: err}
+			c.C <- &Event{Err: err}
 			break
 		}
 
-		mods := []*Change{}
 		next := mkState(data)
-
-		fmt.Printf("--> %#v\n", next)
-
 		for id, status := range next {
 			if curr[id] == status {
 				continue
 			}
 
+			c.infof("%s: %s", id, status)
+
 			chunks := strings.SplitN(id, ":", 2)
-			mods = append(mods, &Change{
+			c.C <- &Event{
 				Node:      chunks[0],
 				ServiceID: chunks[1],
 				Status:    status,
-			})
-		}
-
-		// send data only when we have any
-		if len(mods) > 0 {
-			c.nextCh <- &payload{changes: mods}
+			}
 		}
 
 		// save state
 		curr = next
 		if err = c.dump(curr); err != nil {
-			c.nextCh <- &payload{err: err}
+			c.C <- &Event{Err: err}
 			break
 		}
 	}
@@ -272,11 +263,12 @@ func mkState(checks api.HealthChecks) state {
 	return s
 }
 
-// Change is a service state change
-type Change struct {
+// Event is a service state change
+type Event struct {
 	Node      string
 	ServiceID string
 	Status    string
+	Err       error
 }
 
 // load loads consul state from kv store
@@ -316,5 +308,7 @@ func (c *Consul) Close() error {
 
 // infof prints a debug message to stderr when debug mode is enabled
 func (c *Consul) infof(s string, v ...interface{}) {
-	fmt.Fprintf(os.Stderr, "consul: "+s+"\n", v...)
+	if c.debug {
+		log.Printf("consul[%p]: "+s, append([]interface{}{c}, v...)...)
+	}
 }
