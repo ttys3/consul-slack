@@ -3,7 +3,9 @@ package consul
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -106,7 +108,7 @@ func (c *Consul) createSession() error {
 	// renew in the background
 	go func() {
 		if err = c.api.Session().RenewPeriodic(ttl, sess, nil, c.stopCh); err != nil {
-			c.infof("renew session error: %v", err)
+			fmt.Fprintf(os.Stderr, "renew session error: %v\n", err)
 		}
 	}()
 
@@ -114,7 +116,7 @@ func (c *Consul) createSession() error {
 	go func() {
 		<-c.stopCh
 		if err := c.destroySession(); err != nil {
-			c.infof("destroy session error: %v", err)
+			fmt.Fprintf(os.Stderr, "destroy session error: %v\n", err)
 		}
 	}()
 
@@ -152,7 +154,7 @@ func (c *Consul) createSession() error {
 	return nil
 }
 
-// destroySession destroys consul agent session
+// destroySession destroys consul agent session.
 func (c *Consul) destroySession() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -174,6 +176,7 @@ func (c *Consul) destroySession() error {
 	return nil
 }
 
+// watches for changes and sends them to C.
 func (c *Consul) watch() {
 	defer close(c.C)
 
@@ -263,7 +266,7 @@ func mkState(checks api.HealthChecks) state {
 	return s
 }
 
-// Event is a service state change
+// Event is a service state change.
 type Event struct {
 	Node      string
 	ServiceID string
@@ -271,7 +274,7 @@ type Event struct {
 	Err       error
 }
 
-// load loads consul state from kv store
+// load loads consul state from the kv store.
 func (c *Consul) load() (state, error) {
 	kv, _, err := c.api.KV().Get(stateKey, nil)
 	if err != nil {
@@ -285,7 +288,7 @@ func (c *Consul) load() (state, error) {
 	return s, err
 }
 
-// dump saves consul state to kv store
+// dump saves consul state to the kv store.
 func (c *Consul) dump(s state) error {
 	b, err := json.Marshal(s)
 	if err != nil {
@@ -300,13 +303,13 @@ func (c *Consul) dump(s state) error {
 	return err
 }
 
-// Close shuts down Next() function
+// Close closes C channel.
 func (c *Consul) Close() error {
 	close(c.stopCh)
 	return nil
 }
 
-// infof prints a debug message to stderr when debug mode is enabled
+// infof prints a debug message when debug mode is enabled.
 func (c *Consul) infof(s string, v ...interface{}) {
 	if c.debug {
 		log.Printf("consul[%p]: "+s, append([]interface{}{c}, v...)...)

@@ -132,5 +132,7 @@ func startConsul(t *testing.T) *os.Process {
 }
 
 func stopConsul(t *testing.T, p *os.Process) {
-	p.Kill()
+	if err := p.Kill(); err != nil {
+		t.Fatal(err)
+	}
 }
