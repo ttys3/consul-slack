@@ -1,4 +1,4 @@
-# consul-slack
+# consul-slack [![CircleCI](https://circleci.com/gh/amenzhinsky/consul-slack.svg?style=svg)](https://circleci.com/gh/amenzhinsky/consul-slack)
 
 Consul services state slack notifier written in go.
 

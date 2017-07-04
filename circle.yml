@@ -1,0 +1,22 @@
+---
+machine:
+  environment:
+    GOPATH: "${HOME}/.go_project"
+    BUILD_PATH: "${GOPATH}/src/github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}"
+
+dependencies:
+  pre:
+    - wget https://releases.hashicorp.com/consul/0.8.5/consul_0.8.5_linux_amd64.zip
+    - sudo unzip consul_0.8.5_linux_amd64.zip -d /usr/local/bin
+    - mkdir -p ~/.go_project/src/github.com/${CIRCLE_PROJECT_USERNAME}
+    - ln -s ${HOME}/${CIRCLE_PROJECT_REPONAME} ${BUILD_PATH}
+
+  override:
+    - go version
+
+  cache_directories:
+    - /usr/local/bin
+
+test:
+  override:
+    - cd $BUILD_PATH && make test
