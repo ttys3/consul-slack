@@ -75,11 +75,11 @@ func start() error {
 
 		for _, c := range checks {
 			switch c.Status {
-			case "critical":
+			case consul.Critical:
 				s.Danger("[%s] %s service is critical", c.Node, c.ServiceID)
-			case "passing":
+			case consul.Passing:
 				s.Good("[%s] %s service is back to normal", c.Node, c.ServiceID)
-			case "warning":
+			case consul.Warning:
 				s.Warning("[%s] %s is having problems", c.Node, c.ServiceID)
 			}
 		}

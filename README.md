@@ -2,8 +2,22 @@
 
 Consul services state slack notifier written in go.
 
-## Usage
+## Running
 
+As a systemd service:
 ```
-$ consul-slack -slack-url MY_WEBHOOK_URL
+[Unit]
+Description=Consul slack notifier
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/consul-slack \
+	-slack-url WEBHOOK_URL \
+	-slack-channel '#consul' \
+	-slack-username Consul \
+	-consul-address 127.0.0.1:8500
+
+[Install]
+WantedBy=multi-user.target
 ```

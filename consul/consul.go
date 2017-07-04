@@ -210,24 +210,25 @@ func (c *Consul) watch() {
 		mods := []*Change{}
 		next := mkState(data)
 
+		fmt.Printf("--> %#v\n", next)
+
 		for id, status := range next {
-			if curr[id] != status {
-				chunks := strings.SplitN(id, ":", 2)
-
-				mods = append(mods, &Change{
-					Node:      chunks[0],
-					ServiceID: chunks[1],
-					Status:    status,
-				})
+			if curr[id] == status {
+				continue
 			}
-		}
 
-		if len(mods) == 0 {
-			continue
+			chunks := strings.SplitN(id, ":", 2)
+			mods = append(mods, &Change{
+				Node:      chunks[0],
+				ServiceID: chunks[1],
+				Status:    status,
+			})
 		}
 
 		// send data only when we have any
-		c.nextCh <- &payload{changes: mods}
+		if len(mods) > 0 {
+			c.nextCh <- &payload{changes: mods}
+		}
 
 		// save state
 		curr = next
@@ -238,11 +239,18 @@ func (c *Consul) watch() {
 	}
 }
 
+// State names.
+const (
+	Passing  = "passing"
+	Warning  = "warning"
+	Critical = "critical"
+)
+
 // statuses is map of status name to its weight
 var statuses = map[string]int{
-	"passing":  0,
-	"warning":  1,
-	"critical": 2,
+	Passing:  0,
+	Warning:  1,
+	Critical: 2,
 }
 
 // state is current state
@@ -261,7 +269,6 @@ func mkState(checks api.HealthChecks) state {
 			s[id] = check.Status
 		}
 	}
-
 	return s
 }
 
@@ -283,7 +290,6 @@ func (c *Consul) load() (state, error) {
 	if kv != nil {
 		err = json.Unmarshal(kv.Value, &s)
 	}
-
 	return s, err
 }
 
