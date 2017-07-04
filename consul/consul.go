@@ -5,9 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
-
 	"strings"
+	"time"
 
 	"github.com/hashicorp/consul/api"
 )
