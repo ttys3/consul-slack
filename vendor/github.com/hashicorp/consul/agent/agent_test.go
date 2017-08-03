@@ -492,11 +492,6 @@ func TestAgent_RemoveService(t *testing.T) {
 		t.Fatalf("err: %v", err)
 	}
 
-	// Remove the consul service
-	if err := a.RemoveService("consul", false); err == nil {
-		t.Fatalf("should have errored")
-	}
-
 	// Remove without an ID
 	if err := a.RemoveService("", false); err == nil {
 		t.Fatalf("should have errored")
@@ -633,7 +628,9 @@ func TestAgent_RemoveServiceRemovesAllChecks(t *testing.T) {
 
 func TestAgent_AddCheck(t *testing.T) {
 	t.Parallel()
-	a := NewTestAgent(t.Name(), nil)
+	cfg := TestConfig()
+	cfg.EnableScriptChecks = true
+	a := NewTestAgent(t.Name(), cfg)
 	defer a.Shutdown()
 
 	health := &structs.HealthCheck{
@@ -670,7 +667,9 @@ func TestAgent_AddCheck(t *testing.T) {
 
 func TestAgent_AddCheck_StartPassing(t *testing.T) {
 	t.Parallel()
-	a := NewTestAgent(t.Name(), nil)
+	cfg := TestConfig()
+	cfg.EnableScriptChecks = true
+	a := NewTestAgent(t.Name(), cfg)
 	defer a.Shutdown()
 
 	health := &structs.HealthCheck{
@@ -707,7 +706,9 @@ func TestAgent_AddCheck_StartPassing(t *testing.T) {
 
 func TestAgent_AddCheck_MinInterval(t *testing.T) {
 	t.Parallel()
-	a := NewTestAgent(t.Name(), nil)
+	cfg := TestConfig()
+	cfg.EnableScriptChecks = true
+	a := NewTestAgent(t.Name(), cfg)
 	defer a.Shutdown()
 
 	health := &structs.HealthCheck{
@@ -740,7 +741,9 @@ func TestAgent_AddCheck_MinInterval(t *testing.T) {
 
 func TestAgent_AddCheck_MissingService(t *testing.T) {
 	t.Parallel()
-	a := NewTestAgent(t.Name(), nil)
+	cfg := TestConfig()
+	cfg.EnableScriptChecks = true
+	a := NewTestAgent(t.Name(), cfg)
 	defer a.Shutdown()
 
 	health := &structs.HealthCheck{
@@ -802,9 +805,38 @@ func TestAgent_AddCheck_RestoreState(t *testing.T) {
 	}
 }
 
+func TestAgent_AddCheck_ExecDisable(t *testing.T) {
+	t.Parallel()
+
+	a := NewTestAgent(t.Name(), nil)
+	defer a.Shutdown()
+
+	health := &structs.HealthCheck{
+		Node:    "foo",
+		CheckID: "mem",
+		Name:    "memory util",
+		Status:  api.HealthCritical,
+	}
+	chk := &structs.CheckType{
+		Script:   "exit 0",
+		Interval: 15 * time.Second,
+	}
+	err := a.AddCheck(health, chk, false, "")
+	if err == nil || !strings.Contains(err.Error(), "exec scripts are disabled on this agent") {
+		t.Fatalf("err: %v", err)
+	}
+
+	// Ensure we don't have a check mapping
+	if memChk := a.state.Checks()["mem"]; memChk != nil {
+		t.Fatalf("should be missing mem check")
+	}
+}
+
 func TestAgent_RemoveCheck(t *testing.T) {
 	t.Parallel()
-	a := NewTestAgent(t.Name(), nil)
+	cfg := TestConfig()
+	cfg.EnableScriptChecks = true
+	a := NewTestAgent(t.Name(), cfg)
 	defer a.Shutdown()
 
 	// Remove check that doesn't exist
@@ -879,28 +911,6 @@ func TestAgent_updateTTLCheck(t *testing.T) {
 	}
 	if status.Output != "foo" {
 		t.Fatalf("bad: %v", status)
-	}
-}
-
-func TestAgent_ConsulService(t *testing.T) {
-	t.Parallel()
-	a := NewTestAgent(t.Name(), nil)
-	defer a.Shutdown()
-
-	// Consul service is registered
-	services := a.state.Services()
-	if _, ok := services[consul.ConsulServiceID]; !ok {
-		t.Fatalf("%s service should be registered", consul.ConsulServiceID)
-	}
-
-	// Perform anti-entropy on consul service
-	if err := a.state.syncService(consul.ConsulServiceID); err != nil {
-		t.Fatalf("err: %s", err)
-	}
-
-	// Consul service should be in sync
-	if !a.state.serviceStatus[consul.ConsulServiceID].inSync {
-		t.Fatalf("%s service should be in sync", consul.ConsulServiceID)
 	}
 }
 
@@ -1124,6 +1134,7 @@ func TestAgent_PersistCheck(t *testing.T) {
 	cfg := TestConfig()
 	cfg.Server = false
 	cfg.DataDir = testutil.TempDir(t, "agent") // we manage the data dir
+	cfg.EnableScriptChecks = true
 	a := NewTestAgent(t.Name(), cfg)
 	defer os.RemoveAll(cfg.DataDir)
 	defer a.Shutdown()
@@ -1257,6 +1268,7 @@ func TestAgent_PurgeCheckOnDuplicate(t *testing.T) {
 	cfg := TestConfig()
 	cfg.Server = false
 	cfg.DataDir = testutil.TempDir(t, "agent") // we manage the data dir
+	cfg.EnableScriptChecks = true
 	a := NewTestAgent(t.Name(), cfg)
 	defer os.RemoveAll(cfg.DataDir)
 	defer a.Shutdown()
@@ -1426,19 +1438,8 @@ func TestAgent_unloadServices(t *testing.T) {
 	if err := a.unloadServices(); err != nil {
 		t.Fatalf("err: %s", err)
 	}
-
-	// Make sure it was unloaded and the consul service remains
-	found = false
-	for id := range a.state.Services() {
-		if id == svc.ID {
-			t.Fatalf("should have unloaded services")
-		}
-		if id == consul.ConsulServiceID {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("consul service should not be removed")
+	if len(a.state.Services()) != 0 {
+		t.Fatalf("should have unloaded services")
 	}
 }
 
@@ -1507,9 +1508,9 @@ func TestAgent_Service_MaintenanceMode(t *testing.T) {
 }
 
 func TestAgent_Service_Reap(t *testing.T) {
-	t.Parallel()
+	// t.Parallel() // timing test. no parallel
 	cfg := TestConfig()
-	cfg.CheckReapInterval = time.Millisecond
+	cfg.CheckReapInterval = 50 * time.Millisecond
 	cfg.CheckDeregisterIntervalMin = 0
 	a := NewTestAgent(t.Name(), cfg)
 	defer a.Shutdown()
@@ -1523,8 +1524,8 @@ func TestAgent_Service_Reap(t *testing.T) {
 	chkTypes := []*structs.CheckType{
 		&structs.CheckType{
 			Status: api.HealthPassing,
-			TTL:    10 * time.Millisecond,
-			DeregisterCriticalServiceAfter: 100 * time.Millisecond,
+			TTL:    25 * time.Millisecond,
+			DeregisterCriticalServiceAfter: 200 * time.Millisecond,
 		},
 	}
 
@@ -1541,8 +1542,8 @@ func TestAgent_Service_Reap(t *testing.T) {
 		t.Fatalf("should not have critical checks")
 	}
 
-	// Wait for the check TTL to fail.
-	time.Sleep(30 * time.Millisecond)
+	// Wait for the check TTL to fail but before the check is reaped.
+	time.Sleep(100 * time.Millisecond)
 	if _, ok := a.state.Services()["redis"]; !ok {
 		t.Fatalf("should have redis service")
 	}
@@ -1562,7 +1563,7 @@ func TestAgent_Service_Reap(t *testing.T) {
 	}
 
 	// Wait for the check TTL to fail again.
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	if _, ok := a.state.Services()["redis"]; !ok {
 		t.Fatalf("should have redis service")
 	}
@@ -1571,7 +1572,7 @@ func TestAgent_Service_Reap(t *testing.T) {
 	}
 
 	// Wait for the reap.
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(400 * time.Millisecond)
 	if _, ok := a.state.Services()["redis"]; ok {
 		t.Fatalf("redis service should have been reaped")
 	}
@@ -1581,9 +1582,9 @@ func TestAgent_Service_Reap(t *testing.T) {
 }
 
 func TestAgent_Service_NoReap(t *testing.T) {
-	t.Parallel()
+	// t.Parallel() // timing test. no parallel
 	cfg := TestConfig()
-	cfg.CheckReapInterval = time.Millisecond
+	cfg.CheckReapInterval = 50 * time.Millisecond
 	cfg.CheckDeregisterIntervalMin = 0
 	a := NewTestAgent(t.Name(), cfg)
 	defer a.Shutdown()
@@ -1597,7 +1598,7 @@ func TestAgent_Service_NoReap(t *testing.T) {
 	chkTypes := []*structs.CheckType{
 		&structs.CheckType{
 			Status: api.HealthPassing,
-			TTL:    10 * time.Millisecond,
+			TTL:    25 * time.Millisecond,
 		},
 	}
 
@@ -1615,7 +1616,7 @@ func TestAgent_Service_NoReap(t *testing.T) {
 	}
 
 	// Wait for the check TTL to fail.
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	if _, ok := a.state.Services()["redis"]; !ok {
 		t.Fatalf("should have redis service")
 	}
@@ -1624,7 +1625,7 @@ func TestAgent_Service_NoReap(t *testing.T) {
 	}
 
 	// Wait a while and make sure it doesn't reap.
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	if _, ok := a.state.Services()["redis"]; !ok {
 		t.Fatalf("should have redis service")
 	}

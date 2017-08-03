@@ -4,8 +4,8 @@
 [[projects]]
   name = "github.com/hashicorp/consul"
   packages = ["api"]
-  revision = "2c7715154d8d4568524b76d2d4deb7ca6fd1b285"
-  version = "v0.8.5"
+  revision = "b79d951ced8c5f18fe73d35b2806f3435e40cd64"
+  version = "v0.9.0"
 
 [[projects]]
   branch = "master"
@@ -34,6 +34,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "883d39cb892702ea30223c1cdedbd8ce109d213fe9b1d3652947e9451e2102a1"
+  inputs-digest = "074327747b2122043b2c8b79018177e9e89b27bb16123af0df2f8f1dc6487c11"
   solver-name = "gps-cdcl"
   solver-version = 1

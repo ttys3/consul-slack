@@ -131,6 +131,10 @@ type DNSConfig struct {
 
 // HTTPConfig is used to fine tune the Http sub-system.
 type HTTPConfig struct {
+	// BlockEndpoints is a list of endpoint prefixes to block in the
+	// HTTP API. Any requests to these will get a 403 response.
+	BlockEndpoints []string `mapstructure:"block_endpoints"`
+
 	// ResponseHeaders are used to add HTTP header response fields to the HTTP API responses.
 	ResponseHeaders map[string]string `mapstructure:"response_headers"`
 }
@@ -320,6 +324,10 @@ type Autopilot struct {
 	// strategy of waiting until enough newer-versioned servers have been added to the
 	// cluster before promoting them to voters.
 	DisableUpgradeMigration *bool `mapstructure:"disable_upgrade_migration"`
+
+	// (Enterprise-only) UpgradeVersionTag is the node tag to use for version info when
+	// performing upgrade migrations. If left blank, the Consul version will be used.
+	UpgradeVersionTag string `mapstructure:"upgrade_version_tag"`
 }
 
 // Config is the configuration that can be set for an Agent.
@@ -620,6 +628,11 @@ type Config struct {
 	// the cluster until an explicit join is received. If this is set to
 	// true, we ignore the leave, and rejoin the cluster on start.
 	RejoinAfterLeave bool `mapstructure:"rejoin_after_leave"`
+
+	// EnableScriptChecks controls whether health checks which execute
+	// scripts are enabled. This includes regular script checks and Docker
+	// checks.
+	EnableScriptChecks bool `mapstructure:"enable_script_checks"`
 
 	// CheckUpdateInterval controls the interval on which the output of a health check
 	// is updated if there is no change to the state. For example, a check in a steady
@@ -1678,6 +1691,9 @@ func MergeConfig(a, b *Config) *Config {
 	if b.Autopilot.DisableUpgradeMigration != nil {
 		result.Autopilot.DisableUpgradeMigration = b.Autopilot.DisableUpgradeMigration
 	}
+	if b.Autopilot.UpgradeVersionTag != "" {
+		result.Autopilot.UpgradeVersionTag = b.Autopilot.UpgradeVersionTag
+	}
 	if b.Telemetry.DisableHostname == true {
 		result.Telemetry.DisableHostname = true
 	}
@@ -1928,6 +1944,9 @@ func MergeConfig(a, b *Config) *Config {
 	if b.DNSConfig.RecursorTimeout != 0 {
 		result.DNSConfig.RecursorTimeout = b.DNSConfig.RecursorTimeout
 	}
+	if b.EnableScriptChecks {
+		result.EnableScriptChecks = true
+	}
 	if b.CheckUpdateIntervalRaw != "" || b.CheckUpdateInterval != 0 {
 		result.CheckUpdateInterval = b.CheckUpdateInterval
 	}
@@ -1996,6 +2015,9 @@ func MergeConfig(a, b *Config) *Config {
 		result.SessionTTLMin = b.SessionTTLMin
 		result.SessionTTLMinRaw = b.SessionTTLMinRaw
 	}
+
+	result.HTTPConfig.BlockEndpoints = append(a.HTTPConfig.BlockEndpoints,
+		b.HTTPConfig.BlockEndpoints...)
 	if len(b.HTTPConfig.ResponseHeaders) > 0 {
 		if result.HTTPConfig.ResponseHeaders == nil {
 			result.HTTPConfig.ResponseHeaders = make(map[string]string)
@@ -2004,6 +2026,7 @@ func MergeConfig(a, b *Config) *Config {
 			result.HTTPConfig.ResponseHeaders[field] = value
 		}
 	}
+
 	if len(b.Meta) != 0 {
 		if result.Meta == nil {
 			result.Meta = make(map[string]string)

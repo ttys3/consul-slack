@@ -3,9 +3,7 @@ package consul
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,167 +11,97 @@ import (
 	"github.com/hashicorp/consul/api"
 )
 
-const (
-	lockKey  = "consul-slack/.lock"
-	stateKey = "consul-slack/state"
-)
+const stateKey = "consul-slack/state"
 
-var ErrClosed = errors.New("consul: closed")
+// Option is a configuration option.
+type Option func(c *Consul)
 
-// New creates new consul client
-func New(cfg *Config) (*Consul, error) {
-	if cfg == nil {
-		panic("cfg is nil")
+// WithAddress sets consul address.
+func WithAddress(address string) Option {
+	return func(c *Consul) {
+		c.address = address
 	}
-
-	c, err := api.NewClient(&api.Config{
-		Address:    cfg.Address,
-		Scheme:     cfg.Scheme,
-		Datacenter: cfg.Datacenter,
-	})
-
-	// check agent connection
-	_, err = c.Status().Leader()
-	if err != nil {
-		return nil, err
-	}
-
-	if err != nil {
-		return nil, err
-	}
-
-	cc := &Consul{
-		api:    c,
-		stopCh: make(chan struct{}),
-		C:      make(chan *Event, 10),
-		debug:  cfg.Debug,
-	}
-
-	if err = cc.createSession(); err != nil {
-		return nil, err
-	}
-
-	go cc.watch()
-
-	return cc, nil
 }
 
-// Config is consul configuration
-type Config struct {
-	Address    string
-	Scheme     string
-	Datacenter string
-	Debug      bool
+// WithScheme sets consul connection scheme http or https.
+func WithScheme(schema string) Option {
+	return func(c *Consul) {
+		c.scheme = schema
+	}
+}
+
+// WithDatacenter sets datacenter name.
+func WithDatacenter(dc string) Option {
+	return func(c *Consul) {
+		c.datacenter = dc
+	}
+}
+
+// WithLogger sets logger.
+func WithLogger(l *log.Logger) Option {
+	return func(c *Consul) {
+		c.logger = l
+	}
+}
+
+// New creates new consul client
+func New(opts ...Option) (*Consul, error) {
+	c := &Consul{
+		stopCh:    make(chan struct{}),
+		stoppedCh: make(chan struct{}),
+		C:         make(chan *Event),
+	}
+
+	// apply configuration options
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	var err error
+	c.api, err = connect(c)
+	if err != nil {
+		return nil, err
+	}
+
+	go c.watch()
+	return c, nil
 }
 
 // Consul is the consul server client
 type Consul struct {
-	api    *api.Client
-	lock   *api.KVPair
-	locked bool
-	stopCh chan struct{}
-	C      chan *Event
-	debug  bool
-	mu     sync.Mutex
+	api *api.Client
+	mu  sync.Mutex
+
+	stopCh    chan struct{}
+	stoppedCh chan struct{}
+
+	// C is channel that events are pushed to
+	C chan *Event
+
+	address    string
+	scheme     string
+	datacenter string
+	logger     *log.Logger
 }
 
-var (
-	ttl      = "30s"
-	waitTime = 15 * time.Second
-)
+var waitTime = 15 * time.Second
 
-// createSession creates new consul session and holds an unique lock
-func (c *Consul) createSession() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	sess, _, err := c.api.Session().Create(&api.SessionEntry{
-		Behavior:  "delete",
-		TTL:       ttl,
-		LockDelay: time.Second,
-	}, nil)
-
+func connect(c *Consul) (*api.Client, error) {
+	a, err := api.NewClient(&api.Config{
+		Address:    c.address,
+		Scheme:     c.scheme,
+		Datacenter: c.datacenter,
+	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	c.lock = &api.KVPair{
-		Key:     lockKey,
-		Value:   []byte(sess),
-		Session: sess,
-	}
-
-	c.infof("session created")
-
-	// renew in the background
-	go func() {
-		if err = c.api.Session().RenewPeriodic(ttl, sess, nil, c.stopCh); err != nil {
-			fmt.Fprintf(os.Stderr, "renew session error: %v\n", err)
-		}
-	}()
-
-	// destroy session when the stopCh is closed
-	go func() {
-		<-c.stopCh
-		if err := c.destroySession(); err != nil {
-			fmt.Fprintf(os.Stderr, "destroy session error: %v\n", err)
-		}
-	}()
-
-	// acquire lock
-	c.infof("try lock")
-
-	var waitIndex uint64
-
-	for {
-		kv, _, err := c.api.KV().Get(lockKey, &api.QueryOptions{
-			WaitTime:  waitTime,
-			WaitIndex: waitIndex,
-		})
-
-		if err != nil {
-			return err
-		}
-
-		if kv != nil {
-			waitIndex = kv.ModifyIndex
-		}
-
-		ok, _, err := c.api.KV().Acquire(c.lock, nil)
-		if err != nil {
-			return err
-		}
-
-		if ok {
-			c.infof("lock acquired")
-			c.locked = true
-			break
-		}
-	}
-
-	return nil
-}
-
-// destroySession destroys consul agent session.
-func (c *Consul) destroySession() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.locked {
-		c.infof("session release")
-		_, _, err := c.api.KV().Release(c.lock, nil)
-		if err != nil {
-			return err
-		}
-	}
-
-	// destroy session
-	c.infof("session destroy")
-	_, err := c.api.Session().Destroy(c.lock.Session, nil)
+	// check agent connection
+	_, err = a.Status().Leader()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return a, nil
 }
 
 // watches for changes and sends them to C.
@@ -193,6 +121,7 @@ func (c *Consul) watch() {
 	for {
 		select {
 		case <-c.stopCh:
+			close(c.stoppedCh)
 			return
 		default:
 		}
@@ -233,6 +162,7 @@ func (c *Consul) watch() {
 	}
 }
 
+// TODO: implement Added and Deleted states.
 // State names.
 const (
 	Passing  = "passing"
@@ -305,13 +235,23 @@ func (c *Consul) dump(s state) error {
 
 // Close closes C channel.
 func (c *Consul) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	select {
+	case <-c.stoppedCh:
+		return errors.New("already closed")
+	default:
+	}
+
 	close(c.stopCh)
+	<-c.stoppedCh
 	return nil
 }
 
 // infof prints a debug message when debug mode is enabled.
-func (c *Consul) infof(s string, v ...interface{}) {
-	if c.debug {
-		log.Printf("consul[%p]: "+s, append([]interface{}{c}, v...)...)
+func (c *Consul) infof(format string, v ...interface{}) {
+	if c.logger != nil {
+		c.logger.Printf(format, v...)
 	}
 }

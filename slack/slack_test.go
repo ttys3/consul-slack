@@ -26,11 +26,11 @@ func TestNew(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	s, err := New(&Config{
-		WebhookURL: ts.URL,
-		Username:   "foo",
-		Channel:    "#bar",
-	})
+	s, err := New(
+		WithWebhookURL(ts.URL),
+		WithUsername("foo"),
+		WithChannel("#bar"),
+	)
 
 	if err != nil {
 		t.Fatal(err)

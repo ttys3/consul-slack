@@ -195,6 +195,42 @@ func TestSetMeta(t *testing.T) {
 	}
 }
 
+func TestHTTPAPI_BlockEndpoints(t *testing.T) {
+	t.Parallel()
+
+	cfg := TestConfig()
+	cfg.HTTPConfig.BlockEndpoints = []string{
+		"/v1/agent/self",
+	}
+
+	a := NewTestAgent(t.Name(), cfg)
+	defer a.Shutdown()
+
+	handler := func(resp http.ResponseWriter, req *http.Request) (interface{}, error) {
+		return nil, nil
+	}
+
+	// Try a blocked endpoint, which should get a 403.
+	{
+		req, _ := http.NewRequest("GET", "/v1/agent/self", nil)
+		resp := httptest.NewRecorder()
+		a.srv.wrap(handler)(resp, req)
+		if got, want := resp.Code, http.StatusForbidden; got != want {
+			t.Fatalf("bad response code got %d want %d", got, want)
+		}
+	}
+
+	// Make sure some other endpoint still works.
+	{
+		req, _ := http.NewRequest("GET", "/v1/agent/checks", nil)
+		resp := httptest.NewRecorder()
+		a.srv.wrap(handler)(resp, req)
+		if got, want := resp.Code, http.StatusOK; got != want {
+			t.Fatalf("bad response code got %d want %d", got, want)
+		}
+	}
+}
+
 func TestHTTPAPI_TranslateAddrHeader(t *testing.T) {
 	t.Parallel()
 	// Header should not be present if address translation is off.
@@ -295,16 +331,50 @@ func TestHTTP_wrap_obfuscateLog(t *testing.T) {
 	a.Start()
 	defer a.Shutdown()
 
-	resp := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", "/some/url?token=secret1&token=secret2", nil)
 	handler := func(resp http.ResponseWriter, req *http.Request) (interface{}, error) {
 		return nil, nil
 	}
-	a.srv.wrap(handler)(resp, req)
 
-	// Make sure no tokens from the URL show up in the log
-	if strings.Contains(buf.String(), "secret") {
-		t.Fatalf("bad: %s", buf.String())
+	for _, pair := range [][]string{
+		{
+			"/some/url?token=secret1&token=secret2",
+			"/some/url?token=<hidden>&token=<hidden>",
+		},
+		{
+			"/v1/acl/clone/secret1",
+			"/v1/acl/clone/<hidden>",
+		},
+		{
+			"/v1/acl/clone/secret1?token=secret2",
+			"/v1/acl/clone/<hidden>?token=<hidden>",
+		},
+		{
+			"/v1/acl/destroy/secret1",
+			"/v1/acl/destroy/<hidden>",
+		},
+		{
+			"/v1/acl/destroy/secret1?token=secret2",
+			"/v1/acl/destroy/<hidden>?token=<hidden>",
+		},
+		{
+			"/v1/acl/info/secret1",
+			"/v1/acl/info/<hidden>",
+		},
+		{
+			"/v1/acl/info/secret1?token=secret2",
+			"/v1/acl/info/<hidden>?token=<hidden>",
+		},
+	} {
+		url, want := pair[0], pair[1]
+		t.Run(url, func(t *testing.T) {
+			resp := httptest.NewRecorder()
+			req, _ := http.NewRequest("GET", url, nil)
+			a.srv.wrap(handler)(resp, req)
+
+			if got := buf.String(); !strings.Contains(got, want) {
+				t.Fatalf("got %s want %s", got, want)
+			}
+		})
 	}
 }
 

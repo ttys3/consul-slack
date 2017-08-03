@@ -182,6 +182,10 @@ func TestDecodeConfig(t *testing.T) {
 			c:  &Config{Autopilot: Autopilot{DisableUpgradeMigration: Bool(true)}},
 		},
 		{
+			in: `{"autopilot":{"upgrade_version_tag":"rev"}}`,
+			c:  &Config{Autopilot: Autopilot{UpgradeVersionTag: "rev"}},
+		},
+		{
 			in: `{"autopilot":{"last_contact_threshold":"2s"}}`,
 			c:  &Config{Autopilot: Autopilot{LastContactThreshold: Duration(2 * time.Second), LastContactThresholdRaw: "2s"}},
 		},
@@ -323,12 +327,20 @@ func TestDecodeConfig(t *testing.T) {
 			c:  &Config{DisableKeyringFile: true},
 		},
 		{
+			in: `{"enable_script_checks":true}`,
+			c:  &Config{EnableScriptChecks: true},
+		},
+		{
 			in: `{"encrypt_verify_incoming":true}`,
 			c:  &Config{EncryptVerifyIncoming: Bool(true)},
 		},
 		{
 			in: `{"encrypt_verify_outgoing":true}`,
 			c:  &Config{EncryptVerifyOutgoing: Bool(true)},
+		},
+		{
+			in: `{"http_config":{"block_endpoints":["a","b","c","d"]}}`,
+			c:  &Config{HTTPConfig: HTTPConfig{BlockEndpoints: []string{"a", "b", "c", "d"}}},
 		},
 		{
 			in: `{"http_api_response_headers":{"a":"b","c":"d"}}`,
@@ -1359,6 +1371,7 @@ func TestMergeConfig(t *testing.T) {
 		ReconnectTimeoutLan:    24 * time.Hour,
 		ReconnectTimeoutWanRaw: "36h",
 		ReconnectTimeoutWan:    36 * time.Hour,
+		EnableScriptChecks:     true,
 		CheckUpdateInterval:    8 * time.Minute,
 		CheckUpdateIntervalRaw: "8m",
 		ACLToken:               "1111",
@@ -1394,6 +1407,10 @@ func TestMergeConfig(t *testing.T) {
 		DisableUpdateCheck:        true,
 		DisableAnonymousSignature: true,
 		HTTPConfig: HTTPConfig{
+			BlockEndpoints: []string{
+				"/v1/agent/self",
+				"/v1/acl",
+			},
 			ResponseHeaders: map[string]string{
 				"Access-Control-Allow-Origin": "*",
 			},
