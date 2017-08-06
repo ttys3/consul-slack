@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 
@@ -52,7 +51,6 @@ func start(webhookURL string) error {
 		slack.WithUsername(slackUsernameFlag),
 		slack.WithChannel(slackChannelFlag),
 		slack.WithIconURL(slackIconURLFlag),
-		slack.WithLogger(log.New(os.Stdout, "[slack] ", log.LstdFlags)),
 	)
 	if err != nil {
 		return err
@@ -62,7 +60,6 @@ func start(webhookURL string) error {
 		consul.WithAddress(consulAddressFlag),
 		consul.WithDatacenter(consulDatacenterFlag),
 		consul.WithScheme(consulSchemeFlag),
-		consul.WithLogger(log.New(os.Stdout, "[consul] ", log.LstdFlags)),
 	)
 	if err != nil {
 		return err

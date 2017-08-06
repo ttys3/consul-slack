@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 )
 
 // Option is a configuration value.
@@ -49,7 +50,9 @@ func WithLogger(l *log.Logger) Option {
 
 // New creates new slack client.
 func New(opts ...Option) (*Slack, error) {
-	s := &Slack{}
+	s := &Slack{
+		logger: log.New(os.Stdout, "[slack] ", log.LstdFlags),
+	}
 	for _, opt := range opts {
 		opt(s)
 	}

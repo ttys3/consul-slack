@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +51,7 @@ func New(opts ...Option) (*Consul, error) {
 		stopCh:    make(chan struct{}),
 		stoppedCh: make(chan struct{}),
 		C:         make(chan *Event),
+		logger:    log.New(os.Stdout, "[consul] ", log.LstdFlags),
 	}
 
 	// apply configuration options
