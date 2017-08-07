@@ -4,7 +4,7 @@ Consul services state slack notifier written in go.
 
 ## Running
 
-If you're running multiple instances use the `consul lock` because mutual access to the consul KV storage may lead to unexpected behaviour.
+You can safely run multiple consul-slack instances because they use locking strategy based on the consul KV.
 
 ### Systemd
 ```
@@ -14,13 +14,16 @@ Wants=network.target
 
 [Service]
 Type=simple
+User=consul-slack
+Group=consul-slack
 ExecStart=/usr/local/bin/consul-slack WEBHOOK_URL \
-	-slack-channel '#consul' \
-	-slack-username Consul \
-	-slack-icon https://image-url \
-	-consul-address 127.0.0.1:8500 \
-	-consul-schema http \
-	-consul-datacenter dc1
+  -slack-channel '#consul' \
+  -slack-username Consul \
+  -slack-icon https://image-url \
+  -consul-address 127.0.0.1:8500 \
+  -consul-schema http \
+  -consul-datacenter dc1
+Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target

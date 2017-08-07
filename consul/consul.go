@@ -3,6 +3,7 @@ package consul
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -12,7 +13,10 @@ import (
 	"github.com/hashicorp/consul/api"
 )
 
-const stateKey = "consul-slack/state"
+const (
+	stateKey = "consul-slack/state"
+	lockKey  = "consul-slack/.lock"
+)
 
 // Option is a configuration option.
 type Option func(c *Consul)
@@ -65,6 +69,10 @@ func New(opts ...Option) (*Consul, error) {
 		return nil, err
 	}
 
+	if err = c.createSession(); err != nil {
+		return nil, err
+	}
+
 	go c.watch()
 	return c, nil
 }
@@ -72,7 +80,6 @@ func New(opts ...Option) (*Consul, error) {
 // Consul is the consul server client
 type Consul struct {
 	api *api.Client
-	mu  sync.Mutex
 
 	stopCh    chan struct{}
 	stoppedCh chan struct{}
@@ -84,9 +91,16 @@ type Consul struct {
 	scheme     string
 	datacenter string
 	logger     *log.Logger
+
+	mu     sync.Mutex
+	lock   *api.KVPair
+	locked bool
 }
 
-var waitTime = 15 * time.Second
+var (
+	waitTime = 15 * time.Second
+	ttl      = "30s"
+)
 
 func connect(c *Consul) (*api.Client, error) {
 	a, err := api.NewClient(&api.Config{
@@ -106,6 +120,100 @@ func connect(c *Consul) (*api.Client, error) {
 	return a, nil
 }
 
+// createSession creates new consul session and holds an unique lock
+func (c *Consul) createSession() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	sess, _, err := c.api.Session().Create(&api.SessionEntry{
+		Behavior:  "delete",
+		TTL:       ttl,
+		LockDelay: time.Second,
+	}, nil)
+
+	if err != nil {
+		return err
+	}
+
+	c.lock = &api.KVPair{
+		Key:     lockKey,
+		Value:   []byte(sess),
+		Session: sess,
+	}
+
+	c.logf("session created")
+
+	// renew in the background
+	go func() {
+		if err = c.api.Session().RenewPeriodic(ttl, sess, nil, c.stopCh); err != nil {
+			fmt.Fprintf(os.Stderr, "renew session error: %v\n", err)
+		}
+	}()
+
+	// destroy session when the stopCh is closed
+	go func() {
+		<-c.stopCh
+		if err := c.destroySession(); err != nil {
+			fmt.Fprintf(os.Stderr, "destroy session error: %v\n", err)
+		}
+	}()
+
+	// acquire lock
+	c.logf("try lock")
+
+	var waitIndex uint64
+
+	for {
+		kv, _, err := c.api.KV().Get(lockKey, &api.QueryOptions{
+			WaitTime:  waitTime,
+			WaitIndex: waitIndex,
+		})
+
+		if err != nil {
+			return err
+		}
+
+		if kv != nil {
+			waitIndex = kv.ModifyIndex
+		}
+
+		ok, _, err := c.api.KV().Acquire(c.lock, nil)
+		if err != nil {
+			return err
+		}
+
+		if ok {
+			c.logf("lock acquired")
+			c.locked = true
+			break
+		}
+	}
+
+	return nil
+}
+
+// destroySession destroys consul agent session.
+func (c *Consul) destroySession() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.locked {
+		c.logf("session release")
+		_, _, err := c.api.KV().Release(c.lock, nil)
+		if err != nil {
+			return err
+		}
+	}
+
+	// destroy session
+	c.logf("session destroy")
+	_, err := c.api.Session().Destroy(c.lock.Session, nil)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // watches for changes and sends them to C.
 func (c *Consul) watch() {
 	defer close(c.C)
@@ -113,9 +221,9 @@ func (c *Consul) watch() {
 	// load state
 	curr, err := c.load()
 	if err != nil {
-		c.infof("load state error %v", err)
+		c.logf("load state error %v", err)
 	}
-	c.infof("state is %v", curr)
+	c.logf("state is %v", curr)
 
 	meta := &api.QueryMeta{}
 	data := api.HealthChecks{}
@@ -145,9 +253,9 @@ func (c *Consul) watch() {
 				continue
 			}
 
-			c.infof("%s: %s", id, status)
-
 			chunks := strings.SplitN(id, ":", 2)
+
+			c.logf("%s: %s", id, status)
 			c.C <- &Event{
 				Node:      chunks[0],
 				ServiceID: chunks[1],
@@ -251,8 +359,8 @@ func (c *Consul) Close() error {
 	return nil
 }
 
-// infof prints a debug message when debug mode is enabled.
-func (c *Consul) infof(format string, v ...interface{}) {
+// logf prints a debug message when debug mode is enabled.
+func (c *Consul) logf(format string, v ...interface{}) {
 	if c.logger != nil {
 		c.logger.Printf(format, v...)
 	}

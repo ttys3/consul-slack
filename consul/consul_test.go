@@ -1,7 +1,6 @@
 package consul
 
 import (
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -58,14 +57,16 @@ func TestConsul_All(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c, err := New(WithLogger(log.New(ioutil.Discard, "", 0)))
+	c1, err := New(WithLogger(log.New(os.Stderr, "[consul_1]", 0)))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// server is not started at this point
-	// so we expect it be a critical state
-	testNext(t, c, Critical)
+	testNext(t, c1, Critical)
+	if err = c1.Close(); err != nil {
+		t.Fatal(err)
+	}
+	testClosed(t, c1)
 
 	// start service
 	go func() {
@@ -78,25 +79,46 @@ func TestConsul_All(t *testing.T) {
 		s.Serve(lis)
 	}()
 
-	testNext(t, c, Passing)
-	if err = c.Close(); err != nil {
-		t.Fatal(err)
-	}
+	ch := make(chan struct{})
+	go func() {
+		defer close(ch)
 
-	_, ok := <-c.C
-	if ok {
-		t.Error("c.C is not closed")
-	}
+		c2, err := New(WithLogger(log.New(os.Stderr, "[consul_2]", 0)))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		testNext(t, c2, Passing)
+		go func() {
+			if err := c2.Close(); err != nil {
+				t.Fatal(err)
+			}
+			testClosed(t, c2)
+		}()
+
+		ev := <-c2.C
+		if ev != nil {
+			t.Errorf("ev = %v, want nil", ev)
+		}
+	}()
+
+	<-ch
 }
 
 func testNext(t *testing.T, c *Consul, status string) {
-	hc, ok := <-c.C
-	if !ok {
-		t.Fatal("closed already")
-	}
-
+	hc := <-c.C
 	if hc.Status != status {
 		t.Errorf("Status = %q, want %q", hc.Status, status)
+	}
+}
+
+func testClosed(t *testing.T, c *Consul) {
+	select {
+	case _, ok := <-c.C:
+		if ok {
+			t.Error("c.C is not empty")
+		}
+	default:
 	}
 }
 
@@ -113,5 +135,7 @@ func startConsul(t *testing.T) *os.Process {
 }
 
 func stopConsul(t *testing.T, p *os.Process) {
-	p.Kill()
+	if err := p.Kill(); err != nil {
+		t.Fatal(err)
+	}
 }
