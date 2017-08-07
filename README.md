@@ -16,13 +16,14 @@ Wants=network.target
 Type=simple
 User=consul-slack
 Group=consul-slack
-ExecStart=/usr/local/bin/consul-slack WEBHOOK_URL \
+ExecStart=/usr/local/bin/consul-slack \
   -slack-channel '#consul' \
   -slack-username Consul \
   -slack-icon https://image-url \
   -consul-address 127.0.0.1:8500 \
   -consul-schema http \
-  -consul-datacenter dc1
+  -consul-datacenter dc1 \
+  SLACK_WEBHOOK_URL
 Restart=on-failure
 
 [Install]
