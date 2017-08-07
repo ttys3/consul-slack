@@ -3,7 +3,6 @@ package slack
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,13 +11,6 @@ import (
 
 // Option is a configuration value.
 type Option func(s *Slack)
-
-// WithWebhookURL sets webhook url.
-func WithWebhookURL(url string) Option {
-	return func(s *Slack) {
-		s.webhookURL = url
-	}
-}
 
 // WithChannel sets channel name.
 func WithChannel(channel string) Option {
@@ -49,21 +41,15 @@ func WithLogger(l *log.Logger) Option {
 }
 
 // New creates new slack client.
-func New(opts ...Option) (*Slack, error) {
+func New(url string, opts ...Option) (*Slack, error) {
 	s := &Slack{
-		logger: log.New(os.Stdout, "[slack] ", log.LstdFlags),
+		webhookURL: url,
+		username:   "webhooker",
+		channel:    "webhooks",
+		logger:     log.New(os.Stdout, "[slack] ", log.LstdFlags),
 	}
 	for _, opt := range opts {
 		opt(s)
-	}
-	if s.webhookURL == "" {
-		return nil, errors.New("webhookURL is empty")
-	}
-	if s.username == "" {
-		return nil, errors.New("username is empty")
-	}
-	if s.channel == "" {
-		return nil, errors.New("channel is empty")
 	}
 	return s, nil
 }

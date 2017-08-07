@@ -46,8 +46,7 @@ func main() {
 }
 
 func start(webhookURL string) error {
-	s, err := slack.New(
-		slack.WithIconURL(webhookURL),
+	s, err := slack.New(webhookURL,
 		slack.WithUsername(slackUsernameFlag),
 		slack.WithChannel(slackChannelFlag),
 		slack.WithIconURL(slackIconURLFlag),

@@ -2,6 +2,7 @@ package slack
 
 import (
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,12 +27,11 @@ func TestNew(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	s, err := New(
-		WithWebhookURL(ts.URL),
+	s, err := New(ts.URL,
 		WithUsername("foo"),
 		WithChannel("#bar"),
+		WithLogger(log.New(ioutil.Discard, "", 0)),
 	)
-
 	if err != nil {
 		t.Fatal(err)
 	}

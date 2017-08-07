@@ -1,6 +1,7 @@
 package consul
 
 import (
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
@@ -57,7 +58,7 @@ func TestConsul_All(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c, err := New(WithLogger(log.New(os.Stderr, "[consul_1] ", log.LstdFlags)))
+	c, err := New(WithLogger(log.New(ioutil.Discard, "", 0)))
 	if err != nil {
 		t.Fatal(err)
 	}
