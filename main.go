@@ -74,10 +74,6 @@ func start(webhookURL string) error {
 	}()
 
 	for ev := range c.C {
-		if ev.Err != nil {
-			return err
-		}
-
 		switch ev.Status {
 		case consul.Critical:
 			s.Danger("[%s] %s service is critical", ev.Node, ev.ServiceID)
@@ -87,5 +83,5 @@ func start(webhookURL string) error {
 			s.Warning("[%s] %s is having problems", ev.Node, ev.ServiceID)
 		}
 	}
-	return nil
+	return c.Err()
 }

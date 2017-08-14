@@ -120,6 +120,10 @@ func testClosed(t *testing.T, c *Consul) {
 		}
 	default:
 	}
+
+	if err := c.Err(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func startConsul(t *testing.T) *os.Process {

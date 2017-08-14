@@ -95,6 +95,8 @@ type Consul struct {
 	mu     sync.Mutex
 	lock   *api.KVPair
 	locked bool
+
+	err error
 }
 
 var (
@@ -214,6 +216,11 @@ func (c *Consul) destroySession() error {
 	return nil
 }
 
+// Err is an error encountered during iteration.
+func (c *Consul) Err() error {
+	return c.err
+}
+
 // watches for changes and sends them to C.
 func (c *Consul) watch() {
 	defer close(c.C)
@@ -243,8 +250,8 @@ func (c *Consul) watch() {
 		})
 
 		if err != nil {
-			c.C <- &Event{Err: err}
-			break
+			c.err = err
+			return
 		}
 
 		next := mkState(data)
@@ -266,8 +273,8 @@ func (c *Consul) watch() {
 		// save state
 		curr = next
 		if err = c.dump(curr); err != nil {
-			c.C <- &Event{Err: err}
-			break
+			c.err = err
+			return
 		}
 	}
 }
@@ -313,7 +320,6 @@ type Event struct {
 	Node      string
 	ServiceID string
 	Status    string
-	Err       error
 }
 
 // load loads consul state from the kv store.
