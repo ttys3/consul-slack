@@ -236,7 +236,7 @@ func (c *Consul) watch() {
 		default:
 		}
 
-		data, meta, err = c.api.Health().State("any", &api.QueryOptions{
+		data, meta, err = c.api.Health().State(api.HealthAny, &api.QueryOptions{
 			AllowStale: true,
 			WaitIndex:  meta.LastIndex,
 			WaitTime:   waitTime,
@@ -275,16 +275,18 @@ func (c *Consul) watch() {
 // TODO: implement Added and Deleted states.
 // State names.
 const (
-	Passing  = "passing"
-	Warning  = "warning"
-	Critical = "critical"
+	Passing     = api.HealthPassing
+	Warning     = api.HealthWarning
+	Critical    = api.HealthCritical
+	Maintenance = api.HealthMaint
 )
 
 // statuses is map of status name to its weight
 var statuses = map[string]int{
-	Passing:  0,
-	Warning:  1,
-	Critical: 2,
+	Passing:     0,
+	Warning:     1,
+	Critical:    2,
+	Maintenance: 3,
 }
 
 // state is current state
