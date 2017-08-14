@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -254,20 +253,17 @@ func (c *Consul) watch() {
 			return
 		}
 
-		next := mkState(data)
-		for id, status := range next {
-			if curr[id] == status {
+		next := make(state)
+		for id, hc := range toIDMap(data) {
+			if curr[id] == hc.Status {
 				continue
 			}
 
-			chunks := strings.SplitN(id, ":", 2)
+			// we need to store only serviceID to status map.
+			next[id] = hc.Status
 
-			c.logf("%s: %s", id, status)
-			c.C <- &Event{
-				Node:      chunks[0],
-				ServiceID: chunks[1],
-				Status:    status,
-			}
+			c.logf("%s: %s", id, hc)
+			c.C <- (*Event)(hc)
 		}
 
 		// save state
@@ -279,9 +275,11 @@ func (c *Consul) watch() {
 	}
 }
 
-// TODO: implement Added and Deleted states.
-// State names.
 const (
+	// TODO
+	Added   = "added"
+	Deleted = "deleted"
+
 	Passing     = api.HealthPassing
 	Warning     = api.HealthWarning
 	Critical    = api.HealthCritical
@@ -299,28 +297,24 @@ var statuses = map[string]int{
 // state is current state
 type state map[string]string
 
-// mkState converts a health checks list into internal state representation
-func mkState(checks api.HealthChecks) state {
-	s := make(state, len(checks))
+// toIDMap converts a health checks list into internal state representation.
+func toIDMap(checks api.HealthChecks) map[string]*api.HealthCheck {
+	r := make(map[string]*api.HealthCheck, len(checks))
 	for _, check := range checks {
 		if check.ServiceID == "" {
 			continue
 		}
 
 		id := check.Node + ":" + check.ServiceID
-		if status, ok := s[id]; !ok || statuses[status] < statuses[check.Status] {
-			s[id] = check.Status
+		if hc, ok := r[id]; !ok || statuses[hc.Status] < statuses[check.Status] {
+			r[id] = check
 		}
 	}
-	return s
+	return r
 }
 
 // Event is a service state change.
-type Event struct {
-	Node      string
-	ServiceID string
-	Status    string
-}
+type Event api.HealthCheck
 
 // load loads consul state from the kv store.
 func (c *Consul) load() (state, error) {
