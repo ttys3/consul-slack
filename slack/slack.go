@@ -92,6 +92,11 @@ func (s *Slack) Warning(msg string, v ...interface{}) error {
 	return s.Send("warning", msg, v...)
 }
 
+// Message is equivalent of Send("", ...), no color.
+func (s *Slack) Message(msg string, v ...interface{}) error {
+	return s.Send("", msg, v...)
+}
+
 // Send sends message to the webhook url.
 func (s *Slack) Send(color, msg string, v ...interface{}) error {
 	b, err := json.Marshal(&payload{

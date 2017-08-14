@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -254,20 +253,18 @@ func (c *Consul) watch() {
 			return
 		}
 
-		next := mkState(data)
-		for id, status := range next {
-			if curr[id] == status {
+		next := make(state)
+		for id, hc := range toIDMap(data) {
+			// we need to store only serviceID to status map.
+			next[id] = hc.Status
+
+			// health check status hasn't changed
+			if curr[id] == hc.Status {
 				continue
 			}
 
-			chunks := strings.SplitN(id, ":", 2)
-
-			c.logf("%s: %s", id, status)
-			c.C <- &Event{
-				Node:      chunks[0],
-				ServiceID: chunks[1],
-				Status:    status,
-			}
+			c.logf("%s: %s", id, hc.Status)
+			c.C <- (*Event)(hc)
 		}
 
 		// save state
@@ -279,9 +276,11 @@ func (c *Consul) watch() {
 	}
 }
 
-// TODO: implement Added and Deleted states.
-// State names.
 const (
+	// TODO
+	Added   = "added"
+	Deleted = "deleted"
+
 	Passing     = api.HealthPassing
 	Warning     = api.HealthWarning
 	Critical    = api.HealthCritical
@@ -299,28 +298,26 @@ var statuses = map[string]int{
 // state is current state
 type state map[string]string
 
-// mkState converts a health checks list into internal state representation
-func mkState(checks api.HealthChecks) state {
-	s := make(state, len(checks))
-	for _, check := range checks {
-		if check.ServiceID == "" {
+// toIDMap converts a health checks list into internal state representation.
+func toIDMap(hcs api.HealthChecks) map[string]*api.HealthCheck {
+	r := make(map[string]*api.HealthCheck, len(hcs))
+	for _, hc := range hcs {
+		// ignore serf heal status
+		if hc.ServiceID == "" {
 			continue
 		}
 
-		id := check.Node + ":" + check.ServiceID
-		if status, ok := s[id]; !ok || statuses[status] < statuses[check.Status] {
-			s[id] = check.Status
+		// aggregate state maintenance > critical > warning > passing
+		id := hc.Node + ":" + hc.ServiceID
+		if h, ok := r[id]; !ok || statuses[h.Status] < statuses[hc.Status] {
+			r[id] = hc
 		}
 	}
-	return s
+	return r
 }
 
 // Event is a service state change.
-type Event struct {
-	Node      string
-	ServiceID string
-	Status    string
-}
+type Event api.HealthCheck
 
 // load loads consul state from the kv store.
 func (c *Consul) load() (state, error) {

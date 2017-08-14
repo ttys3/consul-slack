@@ -57,7 +57,7 @@ func TestConsul_All(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c1, err := New(WithLogger(log.New(os.Stderr, "[consul_1]", 0)))
+	c1, err := New(WithLogger(log.New(os.Stderr, "[consul_1] ", 0)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestConsul_All(t *testing.T) {
 	go func() {
 		defer close(ch)
 
-		c2, err := New(WithLogger(log.New(os.Stderr, "[consul_2]", 0)))
+		c2, err := New(WithLogger(log.New(os.Stderr, "[consul_2] ", 0)))
 		if err != nil {
 			t.Fatal(err)
 		}
