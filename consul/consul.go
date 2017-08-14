@@ -255,12 +255,13 @@ func (c *Consul) watch() {
 
 		next := make(state)
 		for id, hc := range toIDMap(data) {
+			// we need to store only serviceID to status map.
+			next[id] = hc.Status
+
+			// state hasn't changed
 			if curr[id] == hc.Status {
 				continue
 			}
-
-			// we need to store only serviceID to status map.
-			next[id] = hc.Status
 
 			c.logf("%s: %s", id, hc)
 			c.C <- (*Event)(hc)

@@ -76,13 +76,13 @@ func start(webhookURL string) error {
 	for ev := range c.C {
 		switch ev.Status {
 		case consul.Critical:
-			s.Danger("[%s] %s is critical\nNotes: %s\nOutput: `%s`", ev.Node, ev.ServiceID, ev.Node, ev.Output)
+			s.Danger("[%s] %s is critical\nNotes: %s\nOutput: %s", ev.Node, ev.ServiceID, ev.Notes, ev.Output)
 		case consul.Passing:
-			s.Good("[%s] %s is back to normal\nNotes: %s\nOutput: `%s`", ev.Node, ev.ServiceID, ev.Node, ev.Output)
+			s.Good("[%s] %s is back to normal\nNotes: %s\nOutput: %s", ev.Node, ev.ServiceID, ev.Notes, ev.Output)
 		case consul.Warning:
-			s.Warning("[%s] %s is having problems\nNotes: %s\nOutput: `%s`", ev.Node, ev.ServiceID, ev.Node, ev.Output)
+			s.Warning("[%s] %s is having problems\nNotes: %s\nOutput: %s", ev.Node, ev.ServiceID, ev.Notes, ev.Output)
 		case consul.Maintenance:
-			s.Message("[%s] %s is under maintenance\nNotes: %s\nOutput: `%s`", ev.Node, ev.ServiceID, ev.Node, ev.Output)
+			s.Message("[%s] %s is under maintenance\nNotes: %s\nOutput: %s", ev.Node, ev.ServiceID, ev.Notes, ev.Output)
 		}
 	}
 	return c.Err()
