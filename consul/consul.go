@@ -3,10 +3,8 @@ package consul
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/hashicorp/consul/api"
@@ -81,9 +79,6 @@ type Consul struct {
 	api *api.Client
 	err error
 
-	mu     sync.Mutex
-	locked bool
-
 	events    chan *Event
 	stopCh    chan struct{}
 	stoppedCh chan struct{}
@@ -96,7 +91,7 @@ type Consul struct {
 
 var (
 	waitTime = 5 * time.Second
-	ttl      = "30s"
+	ttl      = "15s"
 )
 
 func connect(c *Consul) (*api.Client, error) {
@@ -119,9 +114,6 @@ func connect(c *Consul) (*api.Client, error) {
 
 // createSession creates new consul session and holds an unique lock
 func (c *Consul) createSession() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	sess, _, err := c.api.Session().Create(&api.SessionEntry{
 		Behavior:  "delete",
 		TTL:       ttl,
@@ -131,32 +123,25 @@ func (c *Consul) createSession() error {
 	if err != nil {
 		return err
 	}
+	c.logf("session created")
+
+	// renew in the background
+	go func() {
+		if err := c.api.Session().RenewPeriodic(ttl, sess, nil, c.stopCh); err != nil {
+			c.logf("renew session error: %v\n", err)
+			return
+		}
+		c.logf("session destroyed")
+	}()
+
+	// acquire lock
+	c.logf("try lock")
 
 	lock := &api.KVPair{
 		Key:     lockKey,
 		Value:   []byte(sess),
 		Session: sess,
 	}
-
-	c.logf("session created")
-
-	// renew in the background
-	go func() {
-		if err = c.api.Session().RenewPeriodic(ttl, sess, nil, c.stopCh); err != nil {
-			fmt.Fprintf(os.Stderr, "renew session error: %v\n", err)
-		}
-	}()
-
-	// destroy session when the stopCh is closed
-	go func() {
-		<-c.stopCh
-		if err := c.destroySession(lock); err != nil {
-			fmt.Fprintf(os.Stderr, "destroy session error: %v\n", err)
-		}
-	}()
-
-	// acquire lock
-	c.logf("try lock")
 
 	var waitIndex uint64
 
@@ -181,32 +166,8 @@ func (c *Consul) createSession() error {
 
 		if ok {
 			c.logf("lock acquired")
-			c.locked = true
 			break
 		}
-	}
-
-	return nil
-}
-
-// destroySession destroys consul agent session.
-func (c *Consul) destroySession(lock *api.KVPair) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.locked {
-		c.logf("session release")
-		_, _, err := c.api.KV().Release(lock, nil)
-		if err != nil {
-			return err
-		}
-	}
-
-	// destroy session
-	c.logf("session destroy")
-	_, err := c.api.Session().Destroy(lock.Session, nil)
-	if err != nil {
-		return err
 	}
 	return nil
 }
@@ -351,11 +312,8 @@ func (c *Consul) dump(s state) error {
 
 // Close closes C channel.
 func (c *Consul) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	select {
-	case <-c.stoppedCh:
+	case <-c.stopCh:
 		return errors.New("already closed")
 	default:
 	}
