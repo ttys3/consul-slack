@@ -96,7 +96,7 @@ func TestConsul_All(t *testing.T) {
 			testClosed(t, c2)
 		}()
 
-		ev := <-c2.C
+		ev := c2.Next()
 		if ev != nil {
 			t.Errorf("ev = %v, want nil", ev)
 		}
@@ -106,21 +106,17 @@ func TestConsul_All(t *testing.T) {
 }
 
 func testNext(t *testing.T, c *Consul, status string) {
-	hc := <-c.C
+	hc := c.Next()
 	if hc.Status != status {
 		t.Errorf("Status = %q, want %q", hc.Status, status)
 	}
 }
 
 func testClosed(t *testing.T, c *Consul) {
-	select {
-	case _, ok := <-c.C:
-		if ok {
-			t.Error("c.C is not empty")
-		}
-	default:
+	hc := c.Next()
+	if hc != nil {
+		t.Error("hc is not nil")
 	}
-
 	if err := c.Err(); err != nil {
 		t.Fatal(err)
 	}

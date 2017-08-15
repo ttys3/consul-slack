@@ -51,9 +51,9 @@ func WithLogger(l *log.Logger) Option {
 // New creates new consul client
 func New(opts ...Option) (*Consul, error) {
 	c := &Consul{
+		events:    make(chan *Event),
 		stopCh:    make(chan struct{}),
 		stoppedCh: make(chan struct{}),
-		C:         make(chan *Event),
 		logger:    log.New(os.Stdout, "[consul] ", log.LstdFlags),
 	}
 
@@ -79,27 +79,23 @@ func New(opts ...Option) (*Consul, error) {
 // Consul is the consul server client
 type Consul struct {
 	api *api.Client
+	err error
 
+	mu     sync.Mutex
+	locked bool
+
+	events    chan *Event
 	stopCh    chan struct{}
 	stoppedCh chan struct{}
-
-	// C is channel that events are pushed to
-	C chan *Event
 
 	address    string
 	scheme     string
 	datacenter string
 	logger     *log.Logger
-
-	mu     sync.Mutex
-	lock   *api.KVPair
-	locked bool
-
-	err error
 }
 
 var (
-	waitTime = 15 * time.Second
+	waitTime = 5 * time.Second
 	ttl      = "30s"
 )
 
@@ -136,7 +132,7 @@ func (c *Consul) createSession() error {
 		return err
 	}
 
-	c.lock = &api.KVPair{
+	lock := &api.KVPair{
 		Key:     lockKey,
 		Value:   []byte(sess),
 		Session: sess,
@@ -154,7 +150,7 @@ func (c *Consul) createSession() error {
 	// destroy session when the stopCh is closed
 	go func() {
 		<-c.stopCh
-		if err := c.destroySession(); err != nil {
+		if err := c.destroySession(lock); err != nil {
 			fmt.Fprintf(os.Stderr, "destroy session error: %v\n", err)
 		}
 	}()
@@ -178,7 +174,7 @@ func (c *Consul) createSession() error {
 			waitIndex = kv.ModifyIndex
 		}
 
-		ok, _, err := c.api.KV().Acquire(c.lock, nil)
+		ok, _, err := c.api.KV().Acquire(lock, nil)
 		if err != nil {
 			return err
 		}
@@ -194,13 +190,13 @@ func (c *Consul) createSession() error {
 }
 
 // destroySession destroys consul agent session.
-func (c *Consul) destroySession() error {
+func (c *Consul) destroySession(lock *api.KVPair) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.locked {
 		c.logf("session release")
-		_, _, err := c.api.KV().Release(c.lock, nil)
+		_, _, err := c.api.KV().Release(lock, nil)
 		if err != nil {
 			return err
 		}
@@ -208,7 +204,7 @@ func (c *Consul) destroySession() error {
 
 	// destroy session
 	c.logf("session destroy")
-	_, err := c.api.Session().Destroy(c.lock.Session, nil)
+	_, err := c.api.Session().Destroy(lock.Session, nil)
 	if err != nil {
 		return err
 	}
@@ -220,9 +216,14 @@ func (c *Consul) Err() error {
 	return c.err
 }
 
+// Next returns next event or nil when an error was encountered.
+func (c *Consul) Next() *Event {
+	return <-c.events
+}
+
 // watches for changes and sends them to C.
 func (c *Consul) watch() {
-	defer close(c.C)
+	defer close(c.events)
 
 	// load state
 	curr, err := c.load()
@@ -254,7 +255,7 @@ func (c *Consul) watch() {
 		}
 
 		next := make(state)
-		for id, hc := range toIDMap(data) {
+		for id, hc := range aggregateStatus(data) {
 			// we need to store only serviceID to status map.
 			next[id] = hc.Status
 
@@ -264,7 +265,7 @@ func (c *Consul) watch() {
 			}
 
 			c.logf("%s: %s", id, hc.Status)
-			c.C <- (*Event)(hc)
+			c.events <- (*Event)(hc)
 		}
 
 		// save state
@@ -298,8 +299,9 @@ var statuses = map[string]int{
 // state is current state
 type state map[string]string
 
-// toIDMap converts a health checks list into internal state representation.
-func toIDMap(hcs api.HealthChecks) map[string]*api.HealthCheck {
+// aggregateStatus converts a health checks list into ids map
+// aggregating their statuses maintenance > critical > warning > passing.
+func aggregateStatus(hcs api.HealthChecks) map[string]*api.HealthCheck {
 	r := make(map[string]*api.HealthCheck, len(hcs))
 	for _, hc := range hcs {
 		// ignore serf heal status
@@ -307,7 +309,6 @@ func toIDMap(hcs api.HealthChecks) map[string]*api.HealthCheck {
 			continue
 		}
 
-		// aggregate state maintenance > critical > warning > passing
 		id := hc.Node + ":" + hc.ServiceID
 		if h, ok := r[id]; !ok || statuses[h.Status] < statuses[hc.Status] {
 			r[id] = hc

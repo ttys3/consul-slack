@@ -73,7 +73,7 @@ func start(webhookURL string) error {
 		}
 	}()
 
-	for ev := range c.C {
+	for ev := c.Next(); ev != nil; ev = c.Next() {
 		switch ev.Status {
 		case consul.Critical:
 			s.Danger("[%s] %s is critical\nNotes: %s\nOutput: %s", ev.Node, ev.ServiceID, ev.Notes, ev.Output)
@@ -83,6 +83,8 @@ func start(webhookURL string) error {
 			s.Warning("[%s] %s is having problems\nNotes: %s\nOutput: %s", ev.Node, ev.ServiceID, ev.Notes, ev.Output)
 		case consul.Maintenance:
 			s.Message("[%s] %s is under maintenance\nNotes: %s\nOutput: %s", ev.Node, ev.ServiceID, ev.Notes, ev.Output)
+		default:
+			panic(fmt.Sprintf("unknown status %q", ev.Status))
 		}
 	}
 	return c.Err()
