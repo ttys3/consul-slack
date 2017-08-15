@@ -1,0 +1,16 @@
+{
+	"service": {
+		"name": "alwaysup",
+		"port": 9999,
+		"checks": [
+			{
+				"notes": "/bin/true",
+				"script": "/bin/true",
+				"interval": "10s",
+				"timeout": "1s"
+			}
+		]
+	}
+}
+
+

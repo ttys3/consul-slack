@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/consul/api"
@@ -207,7 +208,7 @@ func (c *Consul) watch() {
 		data, meta, err = c.api.Health().State(api.HealthAny, &api.QueryOptions{
 			AllowStale: false,
 			WaitIndex:  meta.LastIndex,
-			WaitTime:   waitTime,
+			WaitTime:   waitTime, // if we call Close() we'll still have to wait
 		})
 
 		if err != nil {
@@ -276,6 +277,11 @@ func aggregateStatus(hcs api.HealthChecks) map[string]*api.HealthCheck {
 		// ignore serf heal status
 		if hc.ServiceID == "" {
 			continue
+		}
+
+		// the service is under maintenance
+		if strings.HasPrefix(hc.CheckID, api.ServiceMaintPrefix) {
+			hc.Status = Maintenance
 		}
 
 		id := hc.Node + ":" + hc.ServiceID

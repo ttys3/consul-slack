@@ -75,14 +75,14 @@ func start(webhookURL string) error {
 
 	for ev := c.Next(); ev != nil; ev = c.Next() {
 		switch ev.Status {
-		case consul.Critical:
-			s.Danger("[%s] %s is critical\nNotes: %s\nOutput: %s", ev.Node, ev.ServiceID, ev.Notes, ev.Output)
 		case consul.Passing:
 			s.Good("[%s] %s is back to normal\nNotes: %s\nOutput: %s", ev.Node, ev.ServiceID, ev.Notes, ev.Output)
 		case consul.Warning:
 			s.Warning("[%s] %s is having problems\nNotes: %s\nOutput: %s", ev.Node, ev.ServiceID, ev.Notes, ev.Output)
+		case consul.Critical:
+			s.Danger("[%s] %s is critical\nNotes: %s\nOutput: %s", ev.Node, ev.ServiceID, ev.Notes, ev.Output)
 		case consul.Maintenance:
-			s.Message("[%s] %s is under maintenance\nNotes: %s\nOutput: %s", ev.Node, ev.ServiceID, ev.Notes, ev.Output)
+			s.Message("[%s] %s is under maintenance\nNotes: %s", ev.Node, ev.ServiceID, ev.Notes)
 		default:
 			panic(fmt.Sprintf("unknown status %q", ev.Status))
 		}
