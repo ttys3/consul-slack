@@ -187,11 +187,11 @@ func (c *Consul) watch() {
 	defer close(c.events)
 
 	// load state
-	curr, err := c.load()
+	state, err := c.load()
 	if err != nil {
 		c.logf("load state error %v", err)
 	}
-	c.logf("state is %v", curr)
+	c.logf("state is %v", state)
 
 	meta := &api.QueryMeta{}
 	data := api.HealthChecks{}
@@ -205,7 +205,7 @@ func (c *Consul) watch() {
 		}
 
 		data, meta, err = c.api.Health().State(api.HealthAny, &api.QueryOptions{
-			AllowStale: true,
+			AllowStale: false,
 			WaitIndex:  meta.LastIndex,
 			WaitTime:   waitTime,
 		})
@@ -215,25 +215,33 @@ func (c *Consul) watch() {
 			return
 		}
 
-		next := make(state)
-		for id, hc := range aggregateStatus(data) {
-			// we need to store only serviceID to status map.
-			next[id] = hc.Status
-
+		save := false
+		hcs := aggregateStatus(data)
+		for id, hc := range hcs {
 			// health check status hasn't changed
-			if curr[id] == hc.Status {
+			if state[id] == hc.Status {
 				continue
 			}
 
+			save = true
+			state[id] = hc.Status
 			c.logf("%s: %s", id, hc.Status)
 			c.events <- (*Event)(hc)
 		}
 
-		// save state
-		curr = next
-		if err = c.dump(curr); err != nil {
-			c.err = err
-			return
+		for id, _ := range state {
+			if _, ok := hcs[id]; !ok {
+				save = true
+				delete(state, id)
+			}
+		}
+
+		// save state only when it's changed.
+		if save {
+			if err = c.dump(state); err != nil {
+				c.err = err
+				return
+			}
 		}
 	}
 }
