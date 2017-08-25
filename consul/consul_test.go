@@ -106,6 +106,7 @@ func TestConsul_All(t *testing.T) {
 }
 
 func testNext(t *testing.T, c *Consul, status string) {
+	t.Helper()
 	hc := c.Next()
 	if hc.Status != status {
 		t.Errorf("Status = %q, want %q", hc.Status, status)
@@ -113,6 +114,7 @@ func testNext(t *testing.T, c *Consul, status string) {
 }
 
 func testClosed(t *testing.T, c *Consul) {
+	t.Helper()
 	hc := c.Next()
 	if hc != nil {
 		t.Error("hc is not nil")
@@ -123,6 +125,7 @@ func testClosed(t *testing.T, c *Consul) {
 }
 
 func startConsul(t *testing.T) *os.Process {
+	t.Helper()
 	cmd := exec.Command("consul", "agent", "-dev")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -135,6 +138,7 @@ func startConsul(t *testing.T) *os.Process {
 }
 
 func stopConsul(t *testing.T, p *os.Process) {
+	t.Helper()
 	if err := p.Kill(); err != nil {
 		t.Fatal(err)
 	}

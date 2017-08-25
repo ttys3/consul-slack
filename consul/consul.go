@@ -183,7 +183,7 @@ func (c *Consul) Next() *Event {
 	return <-c.events
 }
 
-// watches for changes and sends them to C.
+// watch watches for changes.
 func (c *Consul) watch() {
 	defer close(c.events)
 

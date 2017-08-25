@@ -2,7 +2,6 @@ package slack
 
 import (
 	"io/ioutil"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,7 +11,10 @@ import (
 func TestNew(t *testing.T) {
 	t.Parallel()
 
+	called := false
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+
 		b, err := ioutil.ReadAll(r.Body)
 		if err != nil {
 			t.Fatal(err)
@@ -30,7 +32,6 @@ func TestNew(t *testing.T) {
 	s, err := New(ts.URL,
 		WithUsername("foo"),
 		WithChannel("#bar"),
-		WithLogger(log.New(ioutil.Discard, "", 0)),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -38,5 +39,9 @@ func TestNew(t *testing.T) {
 
 	if err = s.Danger("bar"); err != nil {
 		t.Fatal(err)
+	}
+
+	if !called {
+		t.Fatal("http callback hasn't been called")
 	}
 }
