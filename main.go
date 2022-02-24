@@ -6,8 +6,8 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/amenzhinsky/consul-slack/consul"
-	"github.com/amenzhinsky/consul-slack/slack"
+	"github.com/ttys3/consul-slack/consul"
+	"github.com/ttys3/consul-slack/slack"
 )
 
 var (
