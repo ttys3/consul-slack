@@ -29,3 +29,7 @@ Restart=on-failure
 [Install]
 WantedBy=multi-user.target
 ```
+
+## Credits
+
+original code fork from https://github.com/amenzhinsky/consul-slack
