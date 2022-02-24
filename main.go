@@ -3,6 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"os/signal"
 
@@ -22,7 +24,7 @@ var (
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s SLACK_WEEBHOOK_URL\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s SLACK_WEBHOOK_URL\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 
@@ -34,13 +36,19 @@ func main() {
 	flag.StringVar(&consulDatacenterFlag, "consul-datacenter", consulDatacenterFlag, "datacenter to use")
 	flag.Parse()
 
-	if flag.NArg() != 1 {
+	slackWebhookURL := os.Getenv("SLACK_WEBHOOK_URL")
+	if flag.NArg() == 1 {
+		slackWebhookURL = flag.Arg(0)
+	}
+
+	if slackWebhookURL == "" {
+		log.Println("error: empty SLACK_WEBHOOK_URL")
 		flag.Usage()
 		os.Exit(1)
 	}
 
-	if err := start(flag.Arg(0)); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	if err := start(slackWebhookURL); err != nil {
+		fmt.Fprintf(os.Stderr, "exited with error: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -73,6 +81,8 @@ func start(webhookURL string) error {
 		}
 	}()
 
+	go healthCheck()
+
 	for ev := c.Next(); ev != nil; ev = c.Next() {
 		switch ev.Status {
 		case consul.Passing:
@@ -88,4 +98,17 @@ func start(webhookURL string) error {
 		}
 	}
 	return c.Err()
+}
+
+func healthCheck() {
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	})
+	listenAddr := ":8080"
+	if addr := os.Getenv("HEALTH_CHECK_ADDR"); addr != "" {
+		listenAddr = addr
+	}
+
+	log.Printf("start health check http service on %v", )
+	http.ListenAndServe(listenAddr, nil)
 }
