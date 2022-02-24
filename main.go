@@ -22,8 +22,8 @@ var (
 	slackUsernameFlag = "Consul"
 	slackIconURLFlag  = "https://www.consul.io/assets/images/logo_large-475cebb0.png"
 
-	consulAddressFlag    = "127.0.0.1:8500"
-	consulSchemeFlag     = "http"
+	consulAddressFlag    = ""
+	consulSchemeFlag     = ""
 	consulDatacenterFlag = "dc1"
 )
 
@@ -35,9 +35,9 @@ func main() {
 
 	flag.StringVar(&slackUsernameFlag, "slack-username", slackUsernameFlag, "slack user name")
 	flag.StringVar(&slackIconURLFlag, "slack-icon", slackIconURLFlag, "slack user avatar url")
-	flag.StringVar(&consulAddressFlag, "consul-address", consulAddressFlag, "address of the consul server")
-	flag.StringVar(&consulSchemeFlag, "consul-scheme", consulSchemeFlag, "uri scheme of the consul server")
-	flag.StringVar(&consulDatacenterFlag, "consul-datacenter", consulDatacenterFlag, "datacenter to use")
+	flag.StringVar(&consulAddressFlag, "consul-address", consulAddressFlag, "address of the consul server, default to 127.0.0.1:8500")
+	flag.StringVar(&consulSchemeFlag, "consul-scheme", consulSchemeFlag, "uri scheme of the consul server, default to http")
+	flag.StringVar(&consulDatacenterFlag, "consul-datacenter", consulDatacenterFlag, "datacenter to use, default to dc1")
 	flag.Parse()
 
 	slackWebhookURL := os.Getenv("SLACK_WEBHOOK_URL")
