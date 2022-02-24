@@ -17,7 +17,6 @@ Type=simple
 User=consul-slack
 Group=consul-slack
 ExecStart=/usr/local/bin/consul-slack \
-  -slack-channel '#consul' \
   -slack-username Consul \
   -slack-icon https://image-url \
   -consul-address 127.0.0.1:8500 \

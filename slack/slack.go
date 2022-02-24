@@ -12,13 +12,6 @@ import (
 // Option is a configuration value.
 type Option func(s *Slack)
 
-// WithChannel sets channel name.
-func WithChannel(channel string) Option {
-	return func(s *Slack) {
-		s.channel = channel
-	}
-}
-
 // WithUsername sets username that messages are sent on behalf of.
 func WithUsername(username string) Option {
 	return func(s *Slack) {
@@ -45,7 +38,6 @@ func New(url string, opts ...Option) (*Slack, error) {
 	s := &Slack{
 		webhookURL: url,
 		username:   "webhooker",
-		channel:    "webhooks",
 		logger:     log.New(os.Stdout, "[slack] ", log.LstdFlags),
 	}
 	for _, opt := range opts {
@@ -57,7 +49,6 @@ func New(url string, opts ...Option) (*Slack, error) {
 // Slack is a slack client.
 type Slack struct {
 	webhookURL string
-	channel    string
 	username   string
 	iconURL    string
 	logger     *log.Logger
@@ -100,7 +91,6 @@ func (s *Slack) Message(msg string, v ...interface{}) error {
 // Send sends message to the webhook url.
 func (s *Slack) Send(color, msg string, v ...interface{}) error {
 	b, err := json.Marshal(&payload{
-		Channel:  s.channel,
 		Username: s.username,
 		IconURL:  s.iconURL,
 		Attachments: []attachment{

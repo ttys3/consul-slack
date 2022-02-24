@@ -13,7 +13,12 @@ import (
 )
 
 var (
-	slackChannelFlag  = "#consul"
+	ServiceName = ""
+	Version     = "dev"
+	BuildTime   = ""
+)
+
+var (
 	slackUsernameFlag = "Consul"
 	slackIconURLFlag  = "https://www.consul.io/assets/images/logo_large-475cebb0.png"
 
@@ -28,7 +33,6 @@ func main() {
 		flag.PrintDefaults()
 	}
 
-	flag.StringVar(&slackChannelFlag, "slack-channel", slackChannelFlag, "slack channel name")
 	flag.StringVar(&slackUsernameFlag, "slack-username", slackUsernameFlag, "slack user name")
 	flag.StringVar(&slackIconURLFlag, "slack-icon", slackIconURLFlag, "slack user avatar url")
 	flag.StringVar(&consulAddressFlag, "consul-address", consulAddressFlag, "address of the consul server")
@@ -47,6 +51,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	log.Println(ServiceName, Version, BuildTime)
+
 	if err := start(slackWebhookURL); err != nil {
 		fmt.Fprintf(os.Stderr, "exited with error: %v\n", err)
 		os.Exit(1)
@@ -56,7 +62,6 @@ func main() {
 func start(webhookURL string) error {
 	s, err := slack.New(webhookURL,
 		slack.WithUsername(slackUsernameFlag),
-		slack.WithChannel(slackChannelFlag),
 		slack.WithIconURL(slackIconURLFlag),
 	)
 	if err != nil {
@@ -109,6 +114,6 @@ func healthCheck() {
 		listenAddr = addr
 	}
 
-	log.Printf("start health check http service on %v", )
+	log.Printf("start health check http service on %v\n", listenAddr)
 	http.ListenAndServe(listenAddr, nil)
 }
