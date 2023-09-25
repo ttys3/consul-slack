@@ -2,7 +2,7 @@ module github.com/ttys3/consul-slack
 
 go 1.21
 
-require github.com/hashicorp/consul/api v1.24.0
+require github.com/hashicorp/consul/api v1.25.1
 
 require (
 	github.com/armon/go-metrics v0.4.1 // indirect
