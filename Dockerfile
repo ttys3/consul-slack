@@ -3,7 +3,7 @@ FROM ubuntu:24.04
 COPY consul-slack  /usr/local/bin/
 
 RUN mkdir /etc/consul-slack; \
-    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates; \
+    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates tzdata; \
     update-ca-certificates -f; \
     apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
     apt autoremove -y; \
