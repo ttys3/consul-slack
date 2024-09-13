@@ -52,7 +52,7 @@ func (s *Discord) Message(msg string, v ...interface{}) error {
 // Send sends message to the webhook url.
 func (s *Discord) Send(color int, msg string, v ...interface{}) error {
 	b, err := json.Marshal(&discordgo.MessageSend{
-		Content: fmt.Sprintf("nomad message %s", time.Now().Local().String()),
+		Content: fmt.Sprintf("consul check event %s", time.Now().Local().String()),
 		Embeds: []*discordgo.MessageEmbed{
 			{
 				Color: color,
